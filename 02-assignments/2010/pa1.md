@@ -121,28 +121,24 @@ publicly released containing e-mails between many of its employees. We randomly 
 Thanks to your friendly CS224n staﬀ, this Enron task is very easy to run. Simply set the `-jumble` option to true (the default), and the `LanguageModelTester` will automatically run everything for you. The code will call your model to score each scrambled
 sentence and return the sentence assigned the most probability. It then compares your best
 sentence to the gold original sentence and computes two scores:
-• % correct This is the number of sentences that you matched exactly right, divided by the
+- **% correct** This is the number of sentences that you matched exactly right, divided by the
 total number of sentences.
-• Word Error Rate (WER) This is a measure of the distance your chosen sentence is from
+- **Word Error Rate** (WER) This is a measure of the distance your chosen sentence is from
 the original sentence. It is the minimum number of ‘edits’ you have to make to change
 your sentence into the correct one.
+
 The tester will also compute the perplexity of the Enron correct emails with respect to the
 language model. This gives you a third indicator of how well your language model is perform-
-ing. Note that the perplexity will in general be worse (larger) than the Europarl train/test set
-perplexity because the Enron text is a diﬀerent domain than Europarl. The style of language
-and word use in emails is diﬀerent from that in European Parliamant text. The former is more
-informal and will obviously discuss diﬀerent topics than the latter.
-Finally, there is a -showguesses option that, when set to true, will print out the top sentences
-as scored by your language model. It lets you view the actual Enron emails as reordered by your
-model, and can help in error analysis.
+ing. Note that the perplexity will in general be worse (larger) than the Europarl train/test set perplexity because the Enron text is a diﬀerent domain than Europarl. The style of language and word use in emails is diﬀerent from that in European Parliamant text. The former is more informal and will obviously discuss diﬀerent topics than the latter.
+Finally, there is a `-showguesses` option that, when set to true, will print out the top sentences as scored by your language model. It lets you view the actual Enron emails as reordered by your model, and can help in error analysis.
 
 # 4 Your Job
 Your job is to implement several language models of your choice that do a much better job at
 modeling English. You should be able to see the improvement both in terms of the perplexity
-(on europarl-test.sent.txt and enron-test.sent.txt), WER on the word jumble, and in terms of the
-generated sentences looking much better (however, you should concentrate on improving your
+(on europarl-test.sent.txt and enron-test.sent.txt), WER on the word jumble, and in terms of the generated sentences looking much better (however, you should concentrate on improving your
 perplexity. If the other Enron metrics behave contrary to your expectations, however, we would
 like you to explore why that is).
+
 Minimally, you should do the following:
 1. Build a well-smoothed unigram model. One good choice is to use a form of Good-Turing
 estimation, but you could also use absolute discounting.
@@ -158,7 +154,6 @@ as appropriate) that the model satisfies w P (w|h) = 1, where w is a word and h 
 5. For each of your models, train with Europarl training data and record performance on (1)
 europarl-test.sent.txt perplexity, (2) enron-test.sent.txt perplexity, and (3) Enron WER and
 % correct.
-4
 6. Error Analysis between your implemented language models, and why you built them to
 solve specific problems that you observed. (more in section 4.1)
 Some other things you might try:
@@ -174,33 +169,19 @@ we’ve included more Enron data in data/enron-train.sent.txt. How does training
 vs. europarl perform on the diﬀerent tests?
 
 ## 4.1 Evaluation criteria
-While you are building your language models, hopefully lower perplexity will translate into better
-% correct and WER performance on the Enron task, but don’t be surprised if it doesn’t. A best
-language-modeler title and a highest % correct title are up for grabs, but the actual performance
-of your systems is not the major determinant of your grade on this assignment (though good
-performance suggests you are doing something right, and bad performance something wrong).
+While you are building your language models, hopefully lower perplexity will translate into better % correct and WER performance on the Enron task, but don’t be surprised if it doesn’t. A best language-modeler title and a highest % correct title are up for grabs, but the actual performance of your systems is not the major determinant of your grade on this assignment (though good performance suggests you are doing something right, and bad performance something wrong).
+
 What will impact your grade is:
-• A discussion of the motivations for choices that you made and a description of the testing
+- A discussion of the motivations for choices that you made and a description of the testing
 that you did.
-• Clear presentation of the language modeling methods you used.
-• Clear presentation of each language model’s results.
-• Showing that your language models are proper probability distributions.
-• The degree to which you can make sense of what’s going on in your experiments through
+- Clear presentation of the language modeling methods you used.
+- Clear presentation of each language model’s results.
+- Showing that your language models are proper probability distributions.
+- The degree to which you can make sense of what’s going on in your experiments through
 error analysis. When you do see improvements in % correct and WER, where are they
 coming from? Try to localize the improvements if possible. That is, figure out what changes
 in local modeling scores lead to improvements. (This will almost certainly require altering
 the testing code, and this is strongly encouraged.)
-• Error analysis on your final and intermediate results. This is the most important part of
-your report. Are there cases where the language model isn’t selecting a candidate which
-is clearly superior? What would you have to do to your language model to fix these
-cases? What specific examples motivated your language model choices? The bottom line
-is that your write-up should include concrete examples of errors or error fixes, along with
-commentary. For the Enron task, this might involve identifying classes of words which
-are consistently misrecognized, such as proper nouns; for the sentence generation it might
-include identifying consistent anomalies, such as lack of agreement between subjects and
-verbs. It may be tempting to wait until you have built all of your language models before
-you do your error analysis, but that would be a mistake. The point of error analysis is to
-find ways to improve your system, so it should be done frequently when developing your
-models. We would love to hear about errors that you identified and fixed, as well as classes
-of errors still present in your models with ideas for how they might be fixed.
-5
+
+### Error analysis on your final and intermediate results. 
+This is the most important part of your report. Are there cases where the language model isn’t selecting a candidate which is clearly superior? What would you have to do to your language model to fix these cases? What specific examples motivated your language model choices? The bottom line is that your write-up should include concrete examples of errors or error fixes, along with commentary. For the Enron task, this might involve identifying classes of words which are consistently misrecognized, such as proper nouns; for the sentence generation it might include identifying consistent anomalies, such as lack of agreement between subjects and verbs. It may be tempting to wait until you have built all of your language models before you do your error analysis, but that would be a mistake. The point of error analysis is to find ways to improve your system, so it should be done frequently when developing your models. We would love to hear about errors that you identified and fixed, as well as classes of errors still present in your models with ideas for how they might be fixed.

@@ -3,12 +3,15 @@ import random
 from typing import List, Collection
 from nltk.probability import FreqDist
 from nltk.lm.preprocessing import pad_sequence
+from nltk.util import ngrams
 
 class NgramCounter:
     """
     Decoupled counter for n-grams. Currently supports unigrams ONLY.
     """
-    def __init__(self, sentences: Collection[List[str]] = None):
+    def __init__(self, n=1, vocabulary: Collection[str] = None, sentences: Collection[List[str]] = None):
+        self.n = n
+        self.vocabulary = vocabulary
         self.padding = {
             "pad_left": True,
             "pad_right": True,
@@ -24,12 +27,39 @@ class NgramCounter:
         if sentences is not None:
             self.train(sentences)
 
+    @property
+    def is_trained(self):
+        """
+        Returns True if the counter has been trained on at least one word.
+        """
+        return self.unigrams.N() > 0
+
     def train(self, sentences: Collection[List[str]]) -> None:
         for sentence in sentences:
-            # Standard <s> and </s> padding
-            padded = list(pad_sequence(sentence, n=1, **self.padding))
-            self.unigrams.update(padded)
+            # Check each word against the vocabulary and replace with <UNK> if not found
+            checked_sent = [self.check_against_vocab(word) for word in sentence]
+            # Generate padded unigrams for the checked sentence and update the FreqDist
+            sentence_unigrams = self.to_ngrams(checked_sent)
+            # Update the unigram counts with the new sentence's unigrams
+            self.unigrams.update(sentence_unigrams)
+        # Update the total count of unigrams after processing all sentences
         self.total_unigrams = self.unigrams.N()
+
+    # This method checks if a word is in the vocabulary, and if not, it returns the unknown token <UNK>.
+    def check_against_vocab(self, word):
+        if self.vocabulary is None or word in self.vocabulary:
+            return word
+        return self.unknown
+
+    # This method uses the NLTK ngrams function to generate n-grams
+    # for a given n, 
+    # with custom padding on both sides.
+    def to_ngrams(self, sequence):
+        """
+        Wrapper for NLTK ngrams method
+        """
+        return ngrams(sequence, self.n, **self.padding)
+
 
 class LanguageModel:
     """
@@ -56,24 +86,25 @@ class EmpiricalUnigramLanguageModel(LanguageModel):
     A professional UNIGRAM language model utilizing NLTK FreqDist,
     log probabilities, and explicit vocabulary handling.
     """
-    def __init__(self, sentences: Collection[List[str]] = None):
-        self.counter = NgramCounter()
+    def __init__(self, vocabulary: Collection[str] = None, sentences: Collection[List[str]] = None):
+        self.counter = NgramCounter(vocabulary=vocabulary, sentences=sentences)
         if sentences is not None:
             self.train(sentences)
 
     def train(self, sentences: Collection[List[str]]) -> None:
-        self.counter.train(sentences)
+        if not self.counter.is_trained:
+            self.counter.train(sentences)
 
     def _get_word_log_prob(self, word: str) -> float:
         """
         Returns the base 2 log probability of a word.
-        Uses pure NLTK FreqDist.freq() since <UNK> replacement
-        should be handled prior to/during training.
+        Internal storage uses tuples for consistency with NLTK ngrams().
         """
-        prob = self.counter.unigrams.freq(word)
+        # Convert string word to unigram tuple for FreqDist lookup
+        token = (word,)
+        prob = self.counter.unigrams.freq(token)
         if prob == 0:
-            # Fallback for unseen words if <UNK> wasn't properly applied
-            # In a rigorous setup, we'd raise an error or assign minimum prob
+            # Fallback for unseen words (e.g., if <UNK> wasn't in train)
             prob = 1e-10
         return math.log2(prob)
 
@@ -83,8 +114,9 @@ class EmpiricalUnigramLanguageModel(LanguageModel):
 
     def get_sentence_log_probability(self, sentence: List[str]) -> float:
         """
-        Calculates the sum of log probabilities to avoid underflow.
+        Calculates the sum of log probabilities for the whole padded sequence.
         """
+        # We must pad here to match the training distribution (<s>/</s>)
         padded = list(pad_sequence(sentence, n=1, **self.counter.padding))
         log_prob_sum = 0.0
         for word in padded:
@@ -95,7 +127,7 @@ class EmpiricalUnigramLanguageModel(LanguageModel):
         """
         Checks if the probability distribution properly sums up to approximately 1.
         """
-        sum_prob = sum(self.counter.unigrams.freq(word) for word in self.counter.unigrams.keys())
+        sum_prob = sum(self.counter.unigrams.freq(token) for token in self.counter.unigrams.keys())
         return sum_prob
         
     def generate_word(self) -> str:
@@ -104,11 +136,11 @@ class EmpiricalUnigramLanguageModel(LanguageModel):
         """
         sample = random.random()
         sum_prob = 0.0
-        for word in self.counter.unigrams.keys():
-            sum_prob += self.counter.unigrams.freq(word)
+        for token in self.counter.unigrams.keys():
+            sum_prob += self.counter.unigrams.freq(token)
             if sum_prob > sample:
-                return word
-        return self.counter.unknown  # Fallback, should not happen if distribution is correct
+                return token[0] # Return the string from the tuple
+        return self.counter.unknown 
 
     def generate_sentence(self) -> List[str]:
         """
