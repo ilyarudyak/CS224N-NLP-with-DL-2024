@@ -26,19 +26,36 @@ class EmpiricalUnigramNltkModel(LanguageModel):
         if not self.counts:
             self.counts = NgramCounter()
             
-        # 3. Use NLTK's padded_everygram_pipeline for maximum performance
+        # 3. Mask the training data so out-of-vocabulary words are replaced by <UNK>
+        masked_sentences = [list(self.vocab.lookup(sentence)) for sentence in sentences]
+
+        # 4. Use NLTK's padded_everygram_pipeline for maximum performance
         # This handles padding and n-gram generation in one efficient pass
-        train_data, _ = padded_everygram_pipeline(self.order, sentences)
+        train_data, _ = padded_everygram_pipeline(self.order, masked_sentences)
         self.counts.update(train_data)
+
+    def unmasked_score(self, word: str, context: tuple = None) -> float:
+        """
+        The low-level probability calculation required by NLTK's LanguageModel API.
+        This represents the probability P(word | context) WITHOUT checking if 
+        word is in the vocabulary (masking is handled by the caller).
+        """
+        # For a Unigram model, context is ignored.
+        # We simply return the empirical frequency of the word.
+        prob = self.counts.unigrams.freq(word)
+        
+        # Avoid strictly returning 0.0, or perplexity will spike to infinity
+        if prob == 0:
+            return 1e-10
+        return prob
 
     def score(self, word: str, context: tuple = None) -> float:
         """
         Returns the probability P(word | context).
-        For Unigrams, context is ignored.
+        NLTK's base class implementation handles the mapping of OOV words
+        to <UNK> before calling unmasked_score.
         """
-        # score(word) in NLTK uses counts.unigrams.freq(word) internally
-        # but handles the <UNK> mapping automatically via the Vocab object.
-        return self.counts.unigrams.freq(word)
+        return super().score(word, context)
 
     def logscore(self, word: str, context: tuple = None) -> float:
         """
