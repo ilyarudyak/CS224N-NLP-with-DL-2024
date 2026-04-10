@@ -241,7 +241,7 @@ class KneserNeyModel(BaseNgramModel):
             # Backoff to Bigram
             context = context[1:]
 
-        # 2. Bigram Backoff
+        # 2. Bigram Backoff: return vanilla MLE for bigrams.
         if len(context) == 1:
             # Check if this bigram context (single word) exists in our bigram counts
             if context in self.counter.allgrams[2]:
@@ -251,7 +251,7 @@ class KneserNeyModel(BaseNgramModel):
             # Backoff to Unigram
             context = ()
 
-        # 3. Unigram Base Case
+        # 3. Unigram Base Case: return vanilla MLE unigram probability.
         return self.counter.flat_ngrams[1].freq((word,))
 
     def logscore(self, word: str, context: tuple = ()):
@@ -264,3 +264,158 @@ class KneserNeyModel(BaseNgramModel):
         if s <= 0:
             return math.log2(1e-12)
         return math.log2(s)
+
+
+class InterpolatedNgramModel(BaseNgramModel):
+    """
+    Provides interpolated n-gram scores.
+    """
+    # Note: We now require `ngram_counter` as the first argument for the new architecture
+    def __init__(self, ngram_counter, lambdas=(0.1, 0.3, 0.6)):
+        super().__init__(ngram_counter)
+
+        if len(lambdas) != self.n:
+            raise ValueError(f"Length of lambdas ({len(lambdas)}) must match n-gram order ({self.n})")
+
+        self.lambdas = lambdas
+
+    def score(self, word: str, context: tuple = ()):
+        """
+        With interpolated n-grams, the score is a weighted sum of the probabilities
+        from all n-gram orders up to n.
+        """
+        context = self.check_context(context)
+        score_val = 0.0
+
+        for i in range(self.n):
+            n = i + 1
+            lambda_weight = self.lambdas[i]
+            ngram_prob = self._get_ngram_prob(word, context, n)
+            score_val += lambda_weight * ngram_prob
+
+        return score_val
+    
+    def _get_ngram_prob(self, word, context, n):
+        """
+        Helper method to get the probability of a word given a context for a specific n-gram order.
+        """
+        if n == 1:
+            # Unigrams are accessed slightly differently in the new NgramCounter
+            return self.counter.flat_ngrams[1].freq((word,))
+        else:
+            # For Bigrams and Trigrams, slice the context properly
+            ngram_context = context[-(n-1):]
+            freqdict = self.counter.allgrams[n][ngram_context]
+            total = freqdict.N()
+            if total == 0:
+                return 0.0
+            return freqdict[word] / total
+        
+
+class StupidBackoffNgramModel(BaseNgramModel):
+    """
+    Provides stupid backoff n-gram scores.
+    """
+    def __init__(self, ngram_counter, lambda_=0.4):
+        super().__init__(ngram_counter)
+        self.lambda_ = lambda_
+
+    def score(self, word: str, context: tuple = ()):
+        """
+        Iterative Stupid Backoff. Backs off to lower order n-grams if count is 0,
+        weighed by lambda_.
+        """
+        context = self.check_context(context)
+
+        # Start with the highest order n-gram
+        for n in range(self.n, 0, -1):
+            if n == 1:
+                # Unigram fallback using flat_ngrams
+                unigram_prob = self.counter.flat_ngrams[1].freq((word,))
+                if unigram_prob > 0:
+                    return unigram_prob
+            else:
+                # Higher-order n-gram probability
+                ngram_context = context[-(n-1):]
+                freqdict = self.counter.allgrams[n][ngram_context]
+                total = freqdict.N()
+                
+                if total > 0:
+                    ngram_prob = freqdict[word] / total
+                    if ngram_prob > 0:
+                        return (self.lambda_ ** (self.n - n)) * ngram_prob
+
+        # If all n-grams have zero counts (rare if <UNK> is handled)
+        return 0.0
+
+
+class AbsoluteDiscountingNgramModelRecursive(BaseNgramModel):
+    """
+    Provides absolute discounting n-gram scores using a recursive mathematical approach.
+    """
+    def __init__(self, ngram_counter, d=0.75):
+        super().__init__(ngram_counter)
+        self.d = d
+
+    def score(self, word: str, context: tuple = ()):
+        context = self.check_context(context)
+        n = len(context) + 1
+
+        # BASE CASE: The lowest order (unigrams)
+        if n == 1:
+            return self.base_score(word)
+
+        # RECURSIVE STEP
+        freqdict = self.counter.allgrams[n][context]
+        count = freqdict[word]
+        total = freqdict.N()
+
+        if total > 0:
+            discounted_mle = max(count - self.d, 0) / total
+            lambda_weight = self._compute_lambda(context, n)
+            # Recursive call: back off to (n-1) context
+            return discounted_mle + lambda_weight * self.score(word, context[1:])
+        else:
+            # If context is unseen, back off entirely
+            return self.score(word, context[1:])
+
+    def base_score(self, word: str):
+        """The unigram distribution. Overridden by Kneser-Ney."""
+        return self.counter.flat_ngrams[1].freq((word,))
+
+    def _compute_lambda(self, context: tuple, n: int):
+        freqdict = self.counter.allgrams[n][context]
+        if freqdict.N() == 0:
+            return 1.0
+        return (self.d * len(freqdict)) / freqdict.N()
+
+
+class KneserNeyNgramModel(AbsoluteDiscountingNgramModelRecursive):
+    """
+    Kneser-Ney smoothing using mathematically rigorous recursion.
+    Overrides Absolute Discounting by using the Continuation Probability for unigrams.
+    """
+    def __init__(self, ngram_counter, d=0.75):
+        super().__init__(ngram_counter, d=d)
+        
+        # Precompute denominator for Continuation Probability: total unique bigram types
+        # equivalent to |{(u, v): c(u, v) > 0}|
+        self._total_bigram_types = sum(len(fd) for fd in self.counter.allgrams[2].values())
+
+        # Precompute numerator: count how many unique contexts precede each word: |{v : C(vw) > 0}|
+        from collections import Counter
+        self._preceding_context_counts = Counter()
+        for fd in self.counter.allgrams[2].values():
+            for word in fd:
+                self._preceding_context_counts[word] += 1
+
+    def base_score(self, word: str):
+        """Overrides MLE unigram with Continuation Probability."""
+        if self._total_bigram_types == 0:
+            return 0.0
+            
+        # Count how many unique contexts precede this word: |{v : C(vw) > 0}|
+        # meaning, how many distinct bigrams end with this word?
+        num_contexts = self._preceding_context_counts.get(word, 0)
+        
+        return num_contexts / self._total_bigram_types

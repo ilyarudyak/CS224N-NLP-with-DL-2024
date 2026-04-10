@@ -68,8 +68,9 @@ class LanguageModelTester:
         print(f"--- Evaluation for {self.model.__class__.__name__} ---")
         
         # Self-consistency check
-        _, sum_prob = self.model.check_model()
-        print(f"Model Integrity (sum of P(w)): {sum_prob:.4f}")
+        avg_prob, success_rate = self.model.check_model()
+        print(f"Model Integrity (average probability): {avg_prob:.4f}")
+        print(f"Model Integrity (success rate): {success_rate:.4f}")
         
         for name, data in test_sets.items():
             pp = self.compute_perplexity_manual(data)
