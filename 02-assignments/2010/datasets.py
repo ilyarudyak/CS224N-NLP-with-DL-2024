@@ -6,11 +6,24 @@ from collections import Counter
 class TextDataset:
     """
     Base class for loading and preprocessing text datasets for language modeling.
+
+    Each dataset is expected to be a text file with one sentence per line.
+    Its already lowercased and space-tokenized, so we just need to read and split.
+
+    We create a dataset with the provided vocabulary or create one from the data if not provided.
+    In language modeling, the vocabulary must be fixed at training time.
+    So we create a vocabulary for training set and then pass it to the test sets to ensure consistent OOV handling.
+
+    @sentences: List of sentences. Each sentence is a list of tokens. List[List[str]]
+    @vocab: Set of unique tokens in the dataset. We add special tokens <s>, </s>, and <UNK>.
     """
     def __init__(self, file_path: str, vocab: Set[str] = None, limit: int = None):
         self.file_path = file_path
         self.limit = limit
-        self.sentences = []
+        self.sentences = [] # List[List[str]]
+
+        # If a vocabulary is provided, we use it; 
+        # otherwise, we will build it from the data.
         self.vocab = vocab if vocab is not None else set()
         
         if os.path.exists(file_path):
@@ -23,7 +36,11 @@ class TextDataset:
         Reads the file, tokenizes sentences, and updates vocabulary if not provided.
         Each line is a sentence.
         """
+        # We only build the vocabulary if it was not provided, 
+        # to ensure consistent OOV handling.
+        # In language modeling, the vocabulary must be fixed at training time.
         build_vocab = len(self.vocab) == 0
+
         with open(self.file_path, 'r', encoding='utf-8') as f:
             for i, line in enumerate(f):
                 if self.limit and i >= self.limit:
@@ -31,7 +48,7 @@ class TextDataset:
                 
                 # Basic preprocessing: lowercase and split
                 # Note: The assignment data seems already lowercased and space-tokenized.
-                tokens = line.strip().split()
+                tokens = line.strip().split() # List[str]
                 if not tokens:
                     continue
                 

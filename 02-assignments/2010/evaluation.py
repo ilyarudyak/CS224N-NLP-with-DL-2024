@@ -68,7 +68,7 @@ class LanguageModelTester:
         print(f"--- Evaluation for {self.model.__class__.__name__} ---")
         
         # Self-consistency check
-        sum_prob = self.model.check_model()
+        _, sum_prob = self.model.check_model()
         print(f"Model Integrity (sum of P(w)): {sum_prob:.4f}")
         
         for name, data in test_sets.items():

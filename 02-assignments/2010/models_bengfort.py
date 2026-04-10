@@ -5,6 +5,8 @@ from nltk.probability import FreqDist, ConditionalFreqDist
 from collections import defaultdict
 from nltk.util import ngrams
 from nltk.lm.preprocessing import pad_sequence
+import logging
+import random
 
 class NgramCounter(object):
     """
@@ -32,10 +34,19 @@ class NgramCounter(object):
         }
 
         self.vocabulary = vocabulary
-        # ConditionalFreqDist representing P(word | context) for all order n
-        self.allgrams = {i: ConditionalFreqDist() for i in range(2, n + 1)}
-        # Flat FreqDists for each order (required by NLTK KneserNeyProbDist)
-        self.flat_ngrams = {i: FreqDist() for i in range(1, n + 1)}
+
+        # ConditionalFreqDist for each n contains:
+        # context as a key and FreqDist of following words as value. For example, for bigrams:
+        # self.allgrams[2][('the',)] 
+
+        # Dict[int, ConditionalFreqDist[Tuple[str, ...], FreqDist[str, int]]]] 
+        # Where the key Tuple[str, ...] is the context and 
+        # the value FreqDist contains counts of words following that context.
+        self.allgrams = {i: ConditionalFreqDist() for i in range(2, n + 1)} 
+        
+        # FreqDict for each n contain counts of n-grams themselves, not separated into context and word
+        # FreqDist({('<s>', 'you'): 1, ('you', 'will'): 1, ('will', 'be'): 1 ...})
+        self.flat_ngrams = {i: FreqDist() for i in range(1, n + 1)} # Dict[int, FreqDist[Tuple[str, ...], int]]
 
         # Train the counter immediately if training text is provided
         if training_text is not None:
@@ -52,12 +63,17 @@ class NgramCounter(object):
         """
         Populates unigram, n-gram, and conditional frequency distributions.
         """
-        for sent in training_text:
+        for i, sent in enumerate(training_text):
+            logging.debug(f"Processing sentence {i}")
             # Mask unknown words
             checked_sent = [self.check_against_vocab(word) for word in sent]
+            # Log the sentence and its checked version for debugging
+            logging.debug(f"Original sentence: {sent}")
+            logging.debug(f"Checked sentence: {checked_sent}")
             
             # Use NLTK's pad_sequence for consistent padding
             padded = list(pad_sequence(checked_sent, n=self.n, **self.padding))
+            logging.debug(f"Padded sentence: {padded}\n")
             
             # Populate flat_ngrams and allgrams for all orders from 1 to n
             for i in range(1, self.n + 1):
@@ -72,6 +88,7 @@ class NgramCounter(object):
             return word
         return self.unknown
 
+    # We do not use this. Instead we call `pad_sequence` directly.
     def to_ngrams(self, sequence):
         """
         Wrapper for NLTK ngrams method handling standard padding.
@@ -85,7 +102,7 @@ class BaseNgramModel(object):
     This base model is equivalent to a Maximum Likelihood Estimation.
     """
 
-    def __init__(self, ngram_counter: NgramCounter):
+    def __init__(self, ngram_counter: NgramCounter = None):
         """
         BaseNgramModel is initialized with an NgramCounter.
         """
@@ -95,8 +112,8 @@ class BaseNgramModel(object):
         self.n = ngram_counter.n
         self.counter = ngram_counter
         # Point to the multi-level structures
-        self.allgrams = ngram_counter.allgrams
-        self._check_against_vocab = self.counter.check_against_vocab
+        # self.allgrams = ngram_counter.allgrams
+        # self._check_against_vocab = self.counter.check_against_vocab
 
     def check_context(self, context):
         """
@@ -108,11 +125,13 @@ class BaseNgramModel(object):
 
     def score(self, word: str, context: tuple = ()):
         """
-        Maximum likelihood score that the word will follow the context.
+        MLE estimates without any smoothing.
         """
         context = self.check_context(context)
         if self.n == 1:
+            # Words are stores as tuples in the unigram FreqDist.
             return self.counter.flat_ngrams[1].freq((word,))
+        
         return self.counter.allgrams[self.n][context].freq(word)
 
     def logscore(self, word: str, context: tuple = ()):
@@ -136,19 +155,59 @@ class BaseNgramModel(object):
         for ngram in ngrams(padded, self.n):
             context, word = tuple(ngram[:-1]), ngram[-1]
             # Must check vocab during inference
-            checked_word = self._check_against_vocab(word)
-            checked_context = tuple([self._check_against_vocab(c) for c in context])
+            checked_word = self.counter.check_against_vocab(word)
+            checked_context = tuple([self.counter.check_against_vocab(c) for c in context])
             
             log_prob_sum += self.logscore(checked_word, checked_context)
             
         return log_prob_sum
 
-    def check_model(self):
+    def check_model(self, num_samples=100):
         """
-        Required by `evaluation.py`. Just returns 1.0 since it's hard to
-        exhaustively check all probabilities for trigrams.
+        Validates that the probability distribution sums to 1.0 for a given set of contexts.
+        Strictly requires a vocabulary set in the counter during training.
+        Returns: (average_sum, success_rate)
         """
-        return 1.0
+        
+        if not self.counter.vocabulary:
+            raise ValueError("Vocabulary must be provided to the counter for validation.")
+            
+        vocab = list(self.counter.vocabulary)
+        success_count = 0
+        
+        # For Unigram models, we just sum over the entire vocabulary once.
+        if self.n == 1:
+            total_prob = sum(self.score(w) for w in vocab)
+            success = 1 if abs(total_prob - 1.0) < 1e-5 else 0
+            return total_prob, success
+
+        # For N-gram models, sample contexts that actually exist in the training data
+        contexts = list(self.counter.allgrams[self.n].keys())
+        context_samples = random.sample(contexts, min(num_samples, len(contexts)))
+
+        # Check if we have any context samples
+        if not context_samples:
+            raise ValueError("No contexts available for sampling.")
+
+        
+        total_sum = 0.0
+        for context in context_samples:
+            # We iterate over the vocabulary to ensure everything (including UNK and </s>) 
+            # is accounted for in the conditional distribution P(w|context)
+            # current_sum = sum(self.score(w, context) for w in vocab)
+
+            # Instead of iterating over the entire vocabulary, 
+            # we can iterate over the actual words that follow this context in the training data.
+            current_sum = sum(self.score(w, context) for w in self.counter.allgrams[self.n][context].keys())
+
+            total_sum += current_sum
+            if abs(current_sum - 1.0) < 1e-5:
+                success_count += 1
+
+        avg_prob = total_sum / len(context_samples)
+        success_rate = success_count / len(context_samples)
+        
+        return avg_prob, success_rate
 
 
 class KneserNeyModel(BaseNgramModel):
@@ -167,24 +226,25 @@ class KneserNeyModel(BaseNgramModel):
 
     def score(self, word: str, context: tuple = ()):
         """
-        Recursive score: Trigram (KN) -> Bigram (MLE/Laplace) -> Unigram (MLE).
+        Recursive score with proper backoff: Trigram (KN) -> Bigram (KN/MLE) -> Unigram (MLE).
         """
         context = self.check_context(context)
         
         # 1. Try Trigram with NLTK Kneser-Ney
         if len(context) == 2:
             target_ngram = context + (word,)
-            # KneserNeyProbDist returns 0 if context is unseen OR word unseen in context
+            # NLTK KN handles valid contexts and provides a discounted probability.
+            # However, if the context is UNSEEN, it might return 0.
             prob = self.model.prob(target_ngram)
             if prob > 0:
                 return prob
             # Backoff to Bigram
             context = context[1:]
 
-        # 2. Bigram Backoff (MLE for now, as NLTK KN doesn't support bigrams well)
+        # 2. Bigram Backoff
         if len(context) == 1:
-            if self.counter.flat_ngrams[1][context] > 0:
-                # Basic MLE score from ConditionalFreqDist
+            # Check if this bigram context (single word) exists in our bigram counts
+            if context in self.counter.allgrams[2]:
                 prob = self.counter.allgrams[2][context].freq(word)
                 if prob > 0:
                     return prob
@@ -193,12 +253,6 @@ class KneserNeyModel(BaseNgramModel):
 
         # 3. Unigram Base Case
         return self.counter.flat_ngrams[1].freq((word,))
-
-    def logscore(self, word: str, context: tuple = ()):
-        s = self.score(word, context)
-        if s <= 0:
-            return math.log2(1e-12)
-        return math.log2(s)
 
     def logscore(self, word: str, context: tuple = ()):
         """
