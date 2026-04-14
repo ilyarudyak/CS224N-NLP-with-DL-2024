@@ -192,13 +192,9 @@ class BaseNgramModel(object):
         
         total_sum = 0.0
         for context in context_samples:
-            # We iterate over the vocabulary to ensure everything (including UNK and </s>) 
-            # is accounted for in the conditional distribution P(w|context)
-            # current_sum = sum(self.score(w, context) for w in vocab)
-
-            # Instead of iterating over the entire vocabulary, 
-            # we can iterate over the actual words that follow this context in the training data.
-            current_sum = sum(self.score(w, context) for w in self.counter.allgrams[self.n][context].keys())
+            # MUST iterate over the entire vocabulary to account for 
+            # probability mass shifted to unseen words by lambda
+            current_sum = sum(self.score(w, context) for w in vocab)
 
             total_sum += current_sum
             if abs(current_sum - 1.0) < 1e-5:

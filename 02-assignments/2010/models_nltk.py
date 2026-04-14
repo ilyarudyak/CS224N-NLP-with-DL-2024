@@ -1,76 +1,75 @@
 import random
 from typing import List, Collection, Iterable
 from nltk.lm.api import LanguageModel
-from nltk.lm import Vocabulary, NgramCounter
+from nltk.lm import Vocabulary, NgramCounter, KneserNeyInterpolated, StupidBackoff, WittenBellInterpolated
 from nltk.lm.preprocessing import pad_sequence, padded_everygram_pipeline
 
-class EmpiricalUnigramNltkModel(LanguageModel):
+class NltkModelBase(LanguageModel):
     """
-    A professional Unigram model leveraging the official NLTK LanguageModel API.
-    Inheriting from NLTK's base class gives us access to .perplexity(), .entropy(),
-    and .generate() for free.
+    Base class for NLTK-based models to provide common evaluation and generation methods.
     """
-    def __init__(self, order: int = 1, vocabulary: Vocabulary = None, counter: NgramCounter = None):
+    def __init__(self, order: int, vocabulary: Vocabulary = None, counter: NgramCounter = None):
         super().__init__(order, vocabulary, counter)
+        self.counter = self.counts
+        if self.counter:
+            self.counter.n = self.order
+            if not hasattr(self.counter, 'padding'):
+                self.counter.padding = {
+                    "pad_left": True,
+                    "pad_right": True,
+                    "left_pad_symbol": "<s>",
+                    "right_pad_symbol": "</s>"
+                }
 
-    def fit(self, sentences: Collection[List[str]], vocabulary_text: Iterable[str] = None):
+    def get_sentence_log_probability(self, sentence: List[str]) -> float:
+        """Compatibility method for LanguageModelTester."""
+        return sum(self.logscore(w, tuple(c)) for w, c in self._split_padded(sentence))
+
+    def _split_padded(self, sentence):
+        """Helper to pad and split sentence into word/context pairs."""
+        from nltk.util import ngrams
+        padded = list(pad_sequence(sentence, n=self.order, pad_left=True, pad_right=True, 
+                                 left_pad_symbol="<s>", right_pad_symbol="</s>"))
+        for ngram in ngrams(padded, self.order):
+            yield ngram[-1], ngram[:-1]
+
+    def check_model(self, num_samples=100):
         """
-        Fits the model using NLTK's optimized pipelines.
+        Modified check_model for NLTK API.
+        Returns: (average_sum, success_rate)
         """
-        # 1. Prepare Vocabulary if not already provided
         if not self.vocab:
-            # unk_cutoff=1 ensures any word seen only once (or not at all) can be <UNK>
-            self.vocab = Vocabulary(vocabulary_text, unk_cutoff=1)
-        
-        # 2. Prepare NgramCounter
-        if not self.counts:
-            self.counts = NgramCounter()
+            raise ValueError("Model must have a vocabulary.")
             
-        # 3. Mask the training data so out-of-vocabulary words are replaced by <UNK>
-        masked_sentences = [list(self.vocab.lookup(sentence)) for sentence in sentences]
-
-        # 4. Use NLTK's padded_everygram_pipeline for maximum performance
-        # This handles padding and n-gram generation in one efficient pass
-        train_data, _ = padded_everygram_pipeline(self.order, masked_sentences)
-        self.counts.update(train_data)
-
-    def unmasked_score(self, word: str, context: tuple = None) -> float:
-        """
-        The low-level probability calculation required by NLTK's LanguageModel API.
-        This represents the probability P(word | context) WITHOUT checking if 
-        word is in the vocabulary (masking is handled by the caller).
-        """
-        # For a Unigram model, context is ignored.
-        # We simply return the empirical frequency of the word.
-        prob = self.counts.unigrams.freq(word)
+        success_count = 0
+        vocab_list = list(self.vocab)
         
-        # Avoid strictly returning 0.0, or perplexity will spike to infinity
-        if prob == 0:
-            return 1e-10
-        return prob
+        if self.order == 1:
+            total_prob = sum(self.score(w) for w in vocab_list)
+            success = 1 if abs(total_prob - 1.0) < 1e-5 else 0
+            return total_prob, success
 
-    def score(self, word: str, context: tuple = None) -> float:
-        """
-        Returns the probability P(word | context).
-        NLTK's base class implementation handles the mapping of OOV words
-        to <UNK> before calling unmasked_score.
-        """
-        return super().score(word, context)
+        contexts = list(self.counts[self.order].keys())
+        if not contexts:
+            return 0.0, 0.0
+            
+        # NLTK models (especially Kneser-Ney) are extremely slow to sum over whole vocab
+        local_samples = min(num_samples, 5)
+        context_samples = random.sample(contexts, min(local_samples, len(contexts)))
+        total_sum = 0.0
+        for context in context_samples:
+            current_sum = sum(self.score(w, context) for w in vocab_list)
+            total_sum += current_sum
+            if abs(current_sum - 1.0) < 1e-5:
+                success_count += 1
 
-    def logscore(self, word: str, context: tuple = None) -> float:
-        """
-        Returns the log2 probability. NLTK API uses base 2 by default.
-        """
-        return super().logscore(word, context)
+        return total_sum / len(context_samples), success_count / len(context_samples)
 
     def generate_sentence(self, num_words: int = 20) -> List[str]:
         """
         Generates a sentence using NLTK's built-in sampler.
         """
-        # NLTK generate returns a list of tokens
         tokens = self.generate(num_words, text_seed=["<s>"])
-        
-        # Clean up output (remove padding symbols for display)
         result = []
         for t in tokens:
             if t == "</s>":
@@ -78,3 +77,41 @@ class EmpiricalUnigramNltkModel(LanguageModel):
             if t != "<s>":
                 result.append(t)
         return result
+
+class EmpiricalUnigramNltkModel(NltkModelBase):
+    """
+    A professional Unigram model leveraging the official NLTK LanguageModel API.
+    """
+    def unmasked_score(self, word: str, context: tuple = None) -> float:
+        prob = self.counts.unigrams.freq(word)
+        if prob == 0:
+            return 1e-10
+        return prob
+
+class KneserNeyNltkModel(KneserNeyInterpolated, NltkModelBase):
+    """
+    NLTK's Kneser-Ney Interpolated model.
+    """
+    def __init__(self, order, vocabulary=None, counter=None):
+        KneserNeyInterpolated.__init__(self, order, vocabulary=vocabulary, counter=counter)
+        NltkModelBase.__init__(self, order, vocabulary=vocabulary, counter=counter)
+
+class StupidBackoffNltkModel(StupidBackoff, NltkModelBase):
+    """
+    NLTK's Stupid Backoff model.
+    """
+    def __init__(self, order, vocabulary=None, counter=None, **kwargs):
+        # StupidBackoff(alpha=0.4, order=3, vocabulary=..., counter=...)
+        # We manually separate alpha if provided, else use default 0.4
+        alpha = kwargs.pop('alpha', 0.4)
+        StupidBackoff.__init__(self, alpha, order, vocabulary=vocabulary, counter=counter)
+        NltkModelBase.__init__(self, order, vocabulary=vocabulary, counter=counter)
+
+class WittenBellNltkModel(WittenBellInterpolated, NltkModelBase):
+    """
+    NLTK's Witten-Bell Interpolated model.
+    """
+    def __init__(self, order, vocabulary=None, counter=None):
+        WittenBellInterpolated.__init__(self, order, vocabulary=vocabulary, counter=counter)
+        NltkModelBase.__init__(self, order, vocabulary=vocabulary, counter=counter)
+

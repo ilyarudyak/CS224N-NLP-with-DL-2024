@@ -25,6 +25,9 @@ class TextDataset:
         # If a vocabulary is provided, we use it; 
         # otherwise, we will build it from the data.
         self.vocab = vocab if vocab is not None else set()
+
+        # List of all words in the dataset, used to build the vocabulary using `nltk.lm.Vocabulary`
+        self.all_words = [] # List[str]
         
         if os.path.exists(file_path):
             self._load_data()
@@ -55,10 +58,12 @@ class TextDataset:
                 self.sentences.append(tokens)
                 if build_vocab:
                     self.vocab.update(tokens)
+                    self.all_words.extend(tokens)
         
         # Ensure special tokens are always in vocabulary
         if build_vocab:
             self.vocab.update(["<s>", "</s>", "<UNK>"])
+            self.all_words.extend(["<s>", "</s>", "<s>", "</s>"]) 
 
     def get_sentences(self) -> List[List[str]]:
         return self.sentences
