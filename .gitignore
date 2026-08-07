@@ -3,6 +3,7 @@
 
 ### Ignore Data Files ###
 /data
+data/
 
 ### JupyterNotebooks ###
 # gitignore template for Jupyter Notebooks
