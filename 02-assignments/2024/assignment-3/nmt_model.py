@@ -20,6 +20,9 @@ import torch.nn.utils
 import torch.nn.functional as F
 from torch.nn.utils.rnn import pad_packed_sequence, pack_padded_sequence
 
+import logging
+logger = logging.getLogger("nmt.model")
+
 from model_embeddings import ModelEmbeddings
 
 Hypothesis = namedtuple('Hypothesis', ['value', 'score'])
@@ -48,15 +51,15 @@ class NMT(nn.Module):
         self.vocab = vocab
 
         # default values
-        self.post_embed_cnn = None
-        self.encoder = None
-        self.decoder = None
-        self.h_projection = None
-        self.c_projection = None
-        self.att_projection = None
-        self.combined_output_projection = None
-        self.target_vocab_projection = None
-        self.dropout = None
+        self.post_embed_cnn = nn.Conv1d(in_channels=embed_size, out_channels=embed_size, kernel_size=2, padding="same")
+        self.encoder = nn.LSTM(input_size=embed_size, hidden_size=hidden_size, bidirectional=True, bias=True)
+        self.decoder = nn.LSTMCell(input_size=embed_size + hidden_size, hidden_size=hidden_size, bias=True)
+        self.h_projection = nn.Linear(in_features=2 * hidden_size, out_features=hidden_size, bias=False)
+        self.c_projection = nn.Linear(in_features=2 * hidden_size, out_features=hidden_size, bias=False)
+        self.att_projection = nn.Linear(in_features=2 * hidden_size, out_features=hidden_size, bias=False)
+        self.combined_output_projection = nn.Linear(in_features=hidden_size + 2 * hidden_size, out_features=hidden_size, bias=False)
+        self.target_vocab_projection = nn.Linear(in_features=hidden_size, out_features=len(vocab.tgt), bias=False)
+        self.dropout = nn.Dropout(p=dropout_rate)
         # For sanity check only, not relevant to implementation
         self.gen_sanity_check = False
         self.counter = 0
@@ -143,6 +146,8 @@ class NMT(nn.Module):
         @returns dec_init_state (tuple(Tensor, Tensor)): Tuple of tensors representing the decoder's initial
                                                 hidden state and cell.
         """
+        logger.debug(f"====Running encode()=====")
+        logger.debug(f"source_padded shape: {source_padded.shape}, source_lengths: {source_lengths}")
         enc_hiddens, dec_init_state = None, None
 
         ### YOUR CODE HERE (~ 11 Lines)
@@ -180,8 +185,34 @@ class NMT(nn.Module):
         ###     Tensor Permute:
         ###         https://pytorch.org/docs/stable/generated/torch.permute.html
 
+        # 1. Construct Tensor `X` of source sentences with shape (src_len, b, e) using the source model embeddings.
+        X = self.model_embeddings.source(source_padded)  # [src_len, batch_size, embed_size]
+        logger.debug(f"(1) X shape after embedding: {X.shape}")
 
+        # 2. Apply the post_embed_cnn layer
+        # Shape of X is not changed by CNN because we use padding="same"
+        X = X.permute(1, 2, 0)  # [batch_size, embed_size, src_len]
+        X = self.post_embed_cnn(X)  # [batch_size, embed_size, src_len]
+        X = X.permute(2, 0, 1)  # [src_len, batch_size, embed_size]
+        logger.debug(f"(2) X shape after post_embed_cnn: {X.shape}")
 
+        # 3. Compute `enc_hiddens`, `last_hidden`, `last_cell` by applying the encoder to `X`.
+        X = nn.utils.rnn.pack_padded_sequence(X, source_lengths, enforce_sorted=False)
+        # last_hidden shape: [2, batch_size, hidden_size], last_cell shape: [2, batch_size, hidden_size]
+        enc_hiddens_packed, (last_hidden, last_cell) = self.encoder(X)
+        enc_hiddens, _ = nn.utils.rnn.pad_packed_sequence(enc_hiddens_packed) # [src_len, batch_size, hidden_size*2]
+        logger.debug(f"(3) enc_hiddens shape after encoder: {enc_hiddens.shape}")
+        logger.debug(f"(3) last_hidden shape: {last_hidden.shape}, last_cell shape: {last_cell.shape}")
+        enc_hiddens = enc_hiddens.permute(1, 0, 2)  # [batch_size, src_len, hidden_size*2]
+        logger.debug(f"(3) enc_hiddens shape after permute: {enc_hiddens.shape}")
+
+        # 4. Compute `dec_init_state` = (init_decoder_hidden, init_decoder_cell)
+        last_hidden = torch.cat([last_hidden[0], last_hidden[1]], dim=-1)  # [batch_size, 2*hidden_size]
+        logger.debug(f"(4) last_hidden shape after concatenation: {last_hidden.shape}")
+        last_cell = torch.cat([last_cell[0], last_cell[1]], dim=-1)  # [batch_size, 2*hidden_size]
+        logger.debug(f"(4) last_cell shape after concatenation: {last_cell.shape}")
+        dec_init_state = (self.h_projection(last_hidden), self.c_projection(last_cell))
+        logger.debug(f"(4) dec_init_state[0] shape: {dec_init_state[0].shape}, dec_init_state[1] shape: {dec_init_state[1].shape}")
 
 
         ### END YOUR CODE
