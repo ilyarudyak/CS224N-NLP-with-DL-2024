@@ -18,6 +18,7 @@ Usage:
 Options:
     -h --help                               show this screen.
     --cuda                                  use GPU
+    --mps                                   use MPS (Apple Silicon) ## EDIT: ADDED MPS SUPPORT
     --train-src=<file>                      train source file
     --train-tgt=<file>                      train target file
     --dev-src=<file>                        dev source file
@@ -120,24 +121,31 @@ def train(args: Dict):
     """ Train the NMT Model.
     @param args (Dict): args from cmd line
     """
-    train_data_src = read_corpus(args['--train-src'], source='src', vocab_size=21000)       # EDIT: NEW VOCAB SIZE
-    train_data_tgt = read_corpus(args['--train-tgt'], source='tgt', vocab_size=8000)
 
-    dev_data_src = read_corpus(args['--dev-src'], source='src', vocab_size=3000)
-    dev_data_tgt = read_corpus(args['--dev-tgt'], source='tgt', vocab_size=2000)
+    # Step DATA-1: Load training and development data
+    # Load train data in list of tokenized sentences 
+    train_data_src = read_corpus(args['--train-src'], source='src', vocab_size=21000) # list[list[str]]
+    train_data_tgt = read_corpus(args['--train-tgt'], source='tgt', vocab_size=8000) # list[list[str]]
+    # Load dev data in list of tokenized sentences
+    dev_data_src = read_corpus(args['--dev-src'], source='src', vocab_size=3000) # list[list[str]]
+    dev_data_tgt = read_corpus(args['--dev-tgt'], source='tgt', vocab_size=2000) # list[list[str]]
 
     example_sentence_src = dev_data_src[3]
     example_sentence_tgt = dev_data_tgt[3]
 
-    train_data = list(zip(train_data_src, train_data_tgt))
-    dev_data = list(zip(dev_data_src, dev_data_tgt))
+    # Convert train and dev data into list of tuples (src_sent, tgt_sent)
+    train_data = list(zip(train_data_src, train_data_tgt)) # List[Tuple[List[str], List[str]]]
+    dev_data = list(zip(dev_data_src, dev_data_tgt)) # List[Tuple[List[str], List[str]]]
 
+    # Step TRAIN-1: Load hyperparameters from command line args
     train_batch_size = int(args['--batch-size'])
     clip_grad = float(args['--clip-grad'])
     valid_niter = int(args['--valid-niter'])
     log_every = int(args['--log-every'])
     model_save_path = args['--save-to']
 
+    # Step DATA-2: Load vocab from file
+    # We do not train the vocab here, we just load it from a file. 
     vocab = Vocab.load(args['--vocab'])
 
     # model = NMT(embed_size=int(args['--embed-size']),                                 # EDIT: 4X EMBED AND HIDDEN SIZES 
@@ -145,15 +153,20 @@ def train(args: Dict):
     #             dropout_rate=float(args['--dropout']),
     #             vocab=vocab)
 
+    # Step TRAIN-2A: Initialize the NMT model
     model = NMT(embed_size=1024,
                 hidden_size=768,
                 dropout_rate=float(args['--dropout']),
                 vocab=vocab)
-    
+
+    # Step TRAIN-3: Set up Tensorboard for logging
     tensorboard_path = "nmt" if args['--cuda'] else "nmt_local"
     writer = SummaryWriter(log_dir=f"./runs/{tensorboard_path}")
+
+    # Step TRAIN-2B: Set model to training mode
     model.train()
 
+    # Step TRAIN-4: Initialize model parameters uniformly in the range [-uniform_init, +uniform_init]
     uniform_init = float(args['--uniform-init'])
     if np.abs(uniform_init) > 0.:
         print('uniformly initialize parameters [-%f, +%f]' % (uniform_init, uniform_init), file=sys.stderr)
@@ -163,14 +176,19 @@ def train(args: Dict):
     vocab_mask = torch.ones(len(vocab.tgt))
     vocab_mask[vocab.tgt['<pad>']] = 0
 
-    device = torch.device("cuda:0" if args['--cuda'] else "cpu")
+    # Step TRAIN-5: Set up device
+    device_name = "cuda:0" if args['--cuda'] else "mps" if args['--mps'] else "cpu"
+    device = torch.device(device_name)
     print('use device: %s' % device, file=sys.stderr)
 
+    # Step TRAIN-2C: Move model to device
     model = model.to(device)
 
+    # Step TRAIN-6: Set up optimizer
     optimizer = torch.optim.Adam(model.parameters(), lr=float(args['--lr']))
     # optimizer = torch.optim.Adam(model.parameters(), lr=5e-5)                       # EDIT: SMALLER LEARNING RATE
 
+    # Step TRAIN-7: Start training loop
     num_trial = 0
     train_iter = patience = cum_loss = report_loss = cum_tgt_words = report_tgt_words = 0
     cum_examples = report_examples = epoch = valid_num = 0
@@ -179,6 +197,7 @@ def train(args: Dict):
     print('begin Maximum Likelihood training')
 
     while True:
+        # Step EPOCH-1: Increment epoch counter
         epoch += 1
 
         for src_sents, tgt_sents in batch_iter(train_data, batch_size=train_batch_size, shuffle=True):
@@ -297,6 +316,7 @@ def train(args: Dict):
                         # reset patience
                         patience = 0
 
+                # Step EPOCH-2: Check if maximum number of epochs has been reached
                 if epoch == int(args['--max-epoch']):
                     print('reached maximum number of epochs!', file=sys.stderr)
                     exit(0)
@@ -361,7 +381,6 @@ def beam_search(model: NMT, test_data_src: List[List[str]], beam_size: int, max_
     if was_training: model.train(was_training)
 
     return hypotheses
-
 
 def main():
     """ Main func.

@@ -127,8 +127,13 @@ class VocabEntry(object):
 
         @returns sents_var: tensor of (max_sentence_length, batch_size)
         """
+        # Convert sentences to indices
         word_ids = self.words2indices(sents)
+
+        # Pad sentences to the same length and convert to tensor
         sents_t = pad_sents(word_ids, self['<pad>'])
+
+        # Convert to tensor and move to the specified device
         sents_var = torch.tensor(sents_t, dtype=torch.long, device=device)
         return torch.t(sents_var)
 

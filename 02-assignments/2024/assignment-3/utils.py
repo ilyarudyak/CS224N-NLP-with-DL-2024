@@ -93,17 +93,31 @@ def batch_iter(data, batch_size, shuffle=False):
     @param batch_size (int): batch size
     @param shuffle (boolean): whether to randomly shuffle the dataset
     """
+
+    # Calculate the number of batches
     batch_num = math.ceil(len(data) / batch_size)
+
+    # Create an array of indices for the data
+    # [0, 1, 2, ..., len(data)-1]
+    # NOT indices from Vocabulary!
     index_array = list(range(len(data)))
 
+    # If shuffle is True, randomly shuffle the indices
     if shuffle:
         np.random.shuffle(index_array)
 
+    # Yield batches of source and target sentences
     for i in range(batch_num):
+
+        # Get the indices for the current batch
         indices = index_array[i * batch_size: (i + 1) * batch_size]
+        # Get the examples for the current batch using the indices
         examples = [data[idx] for idx in indices]
 
+        # Sort the examples in the batch by the length of the source sentence in descending order
         examples = sorted(examples, key=lambda e: len(e[0]), reverse=True)
+
+        # Extract the source and target sentences from the examples
         src_sents = [e[0] for e in examples]
         tgt_sents = [e[1] for e in examples]
 
