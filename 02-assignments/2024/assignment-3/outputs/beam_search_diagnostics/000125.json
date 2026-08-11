@@ -1,0 +1,176 @@
+{
+    "example_source": [
+        "▁我还",
+        "澄清",
+        "了",
+        "在该",
+        "会议上",
+        "提出的",
+        "若干",
+        "事项",
+        "。"
+    ],
+    "example_target": [
+        "<s>",
+        "▁i",
+        "▁was",
+        "▁able",
+        "▁to",
+        "▁provide",
+        "▁clarification",
+        "▁on",
+        "▁some",
+        "▁of",
+        "▁the",
+        "▁matters",
+        "▁which",
+        "▁were",
+        "▁raised",
+        "▁at",
+        "▁that",
+        "▁meeting",
+        ".",
+        "</s>"
+    ],
+    "hypotheses": [
+        {
+            "hypothesis": [],
+            "score": -4.0229034423828125
+        },
+        {
+            "hypothesis": [
+                "▁the",
+                "▁the",
+                "▁the",
+                "▁the",
+                "▁the",
+                "▁the",
+                "▁the",
+                "▁the",
+                "▁the",
+                "▁the"
+            ],
+            "score": -28.94175148010254
+        },
+        {
+            "hypothesis": [
+                "▁the",
+                "▁the",
+                "▁the",
+                "▁the",
+                "▁the",
+                "▁the",
+                "▁the",
+                "▁the",
+                "▁the",
+                "▁the",
+                "▁the"
+            ],
+            "score": -31.014938354492188
+        },
+        {
+            "hypothesis": [
+                "▁the",
+                "▁the",
+                "▁the",
+                "▁the",
+                "▁the",
+                "▁the",
+                "▁the",
+                "▁the",
+                "▁the",
+                "▁the",
+                "."
+            ],
+            "score": -31.3382568359375
+        },
+        {
+            "hypothesis": [
+                "▁the",
+                "▁the",
+                "▁the",
+                "▁the",
+                "▁the",
+                "▁the",
+                "▁the",
+                "▁the",
+                "▁the",
+                "▁the",
+                "▁of"
+            ],
+            "score": -31.558231353759766
+        },
+        {
+            "hypothesis": [
+                "▁the",
+                "▁the",
+                "▁the",
+                "▁the",
+                "▁the",
+                "▁the",
+                "▁the",
+                "▁the",
+                "▁the",
+                "▁the",
+                "▁the",
+                "."
+            ],
+            "score": -32.908470153808594
+        },
+        {
+            "hypothesis": [
+                "▁the",
+                "▁the",
+                "▁the",
+                "▁the",
+                "▁the",
+                "▁the",
+                "▁the",
+                "▁the",
+                "▁the",
+                "▁the",
+                ".",
+                "."
+            ],
+            "score": -33.22754669189453
+        },
+        {
+            "hypothesis": [
+                "▁the",
+                "▁the",
+                "▁the",
+                "▁the",
+                "▁the",
+                "▁the",
+                "▁the",
+                "▁the",
+                "▁the",
+                "▁the",
+                "▁the",
+                ".",
+                "."
+            ],
+            "score": -34.6728401184082
+        },
+        {
+            "hypothesis": [
+                "▁the",
+                "▁the",
+                "▁the",
+                "▁the",
+                "▁the",
+                "▁the",
+                "▁the",
+                "▁the",
+                "▁the",
+                "▁the",
+                "▁the",
+                ".",
+                ".",
+                "."
+            ],
+            "score": -36.388031005859375
+        }
+    ],
+    "diagnostic_info": "eyJ0IjogIjIwMjYtMDgtMTFUMDc6Mjc6MDMuMzk5NzE1IiwgImgiOiAiaWxpYXJ1ZGlhay1tYWNib29rLmxvY2FsIiwgInUiOiAicm9vdCJ9"
+}

@@ -154,9 +154,9 @@ def train(args: Dict):
     #             vocab=vocab)
 
     # Step TRAIN-2A: Initialize the NMT model
-    model = NMT(embed_size=1024,
-                hidden_size=768,
-                dropout_rate=float(args['--dropout']),
+    model = NMT(embed_size=int(args['--embed-size']), # EDIT: Removed hard-coded embed_size=1024
+                hidden_size=int(args['--hidden-size']), # EDIT: Removed hard-coded hidden_size=768
+                dropout_rate=float(args['--dropout']), # EDIT: Removed hard-coded dropout_rate=0.3
                 vocab=vocab)
 
     # Step TRAIN-3: Set up Tensorboard for logging
@@ -340,6 +340,8 @@ def decode(args: Dict[str, str]):
 
     if args['--cuda']:
         model = model.to(torch.device("cuda:0"))
+    elif args['--mps']:
+        model = model.to(torch.device("mps"))
 
     hypotheses = beam_search(model, test_data_src,
                             #  beam_size=int(args['--beam-size']),                      EDIT: BEAM SIZE USED TO BE 5
