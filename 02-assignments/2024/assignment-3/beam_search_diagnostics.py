@@ -5,6 +5,7 @@ import base64
 import json
 from pathlib import Path
 import os
+import getpass
 
 
 def get_diagnostic_dir():
@@ -12,11 +13,25 @@ def get_diagnostic_dir():
     diag_path.mkdir(parents=True, exist_ok=True)
     return diag_path
 
+# def get_diagnostic_info():
+#     d = {
+#         "t": datetime.utcnow().isoformat(),
+#         "h": socket.gethostname(),
+#         "u": os.getlogin()
+#     }
+#     s = base64.b64encode(json.dumps(d).encode("utf-8")).decode("utf-8") 
+#     return s
+
 def get_diagnostic_info():
+    try:
+        user = os.getlogin()
+    except OSError:
+        user = getpass.getuser()
+
     d = {
         "t": datetime.utcnow().isoformat(),
         "h": socket.gethostname(),
-        "u": os.getlogin()
+        "u": user
     }
     s = base64.b64encode(json.dumps(d).encode("utf-8")).decode("utf-8") 
     return s
