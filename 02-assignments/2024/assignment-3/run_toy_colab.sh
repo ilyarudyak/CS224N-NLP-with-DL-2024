@@ -15,7 +15,7 @@ python run.py train \
     --embed-size=128 \
     --hidden-size=128 \
     --batch-size=8 \
-    --max-epoch=1 \
+    --max-epoch=10 \
     --valid-niter=125 \
     --log-every=25 \
     --max-decoding-time-step=20 \
