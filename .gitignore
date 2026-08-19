@@ -2,8 +2,10 @@
 # Edit at https://www.toptal.com/developers/gitignore?templates=macos,python,visualstudiocode,jupyternotebooks
 
 ### Ignore Data Files ###
-/data
 data/
+
+### Ignore Model and Logs From Colab ###
+downloaded_artifacts/
 
 ### JupyterNotebooks ###
 # gitignore template for Jupyter Notebooks
