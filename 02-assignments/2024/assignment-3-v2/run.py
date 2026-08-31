@@ -346,10 +346,10 @@ def train(args: Dict):
                         # Reset patience
                         patience = 0
 
-                # Check if maximum number of epochs has been reached
-                if epoch == int(args['--max-epoch']):
-                    print('reached maximum number of epochs!', file=sys.stderr)
-                    exit(0)
+        # Check if maximum number of epochs has been reached (at epoch completion)
+        if epoch >= int(args['--max-epoch']):
+            print('reached maximum number of epochs (%d)!' % epoch, file=sys.stderr)
+            exit(0)
 
 
 def decode(args: Dict[str, str]):
