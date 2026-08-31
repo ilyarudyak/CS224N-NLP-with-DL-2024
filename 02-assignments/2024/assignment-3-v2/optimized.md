@@ -14,6 +14,7 @@ The goal is to keep the exact same model architecture (Bi-LSTM Encoder + Luong A
 | **1. Modern Data Pipeline** | A100 | 32 | FP32 | $440\text{ s}$ ($7.3\text{ min}$) | $\sim 14,000\text{ w/s}$ | $52\%$ | $3.9\text{ GB}$ | $2.4\times$ |
 | **2. Pipeline + AMP** | A100 | 128 | BF16 | $196\text{ s}$ ($3.3\text{ min}$) | $\sim 13,100\text{ w/s}$ | $63\%$ | $8.5\text{ GB}$ | $5.3\times$ |
 | **3. Scaled Batch Size** | A100 | 256 | BF16 | **$134\text{ s}$ ($2.23\text{ min}$)** | **$22,530\text{ w/s}$** | **$94\%$** | **$13.6\text{ GB}$** | **$7.8\times$** |
+| **4. Fused CrossEntropyLoss** | A100 | 256 | BF16 | **$144\text{ s}$ ($2.40\text{ min}$)** | **$22,000\text{ w/s}$** | **$90\%$** | **$13.7\text{ GB}$** | **$7.3\times$** |
 
 ### Key Optimizations Applied:
 - **Pre-tokenized `TranslationDataset`**: Replaced string list storage with tokenized integer IDs loaded upfront.
@@ -21,6 +22,7 @@ The goal is to keep the exact same model architecture (Bi-LSTM Encoder + Luong A
 - **Dynamic Tensor `collate_fn`**: Uses PyTorch's native `pad_sequence` and length-sorting before transferring batches directly to GPU tensors (`non_blocking=True`).
 - **Automatic Mixed Precision (`torch.autocast`)**: Native `bfloat16` execution leveraging A100 Tensor Cores.
 - **Batch Size Scaling ($32 \rightarrow 128 \rightarrow 256$)**: Fills all 108 A100 Streaming Multiprocessors, cutting kernel launch overhead by $87.5\%$.
+- **Fused `nn.CrossEntropyLoss`**: Replaced manual `F.log_softmax` + `torch.gather` with PyTorch's standard fused CUDA kernel.
 
 ## 2. Project Structure
 
@@ -190,3 +192,16 @@ This caused unnecessary peak VRAM allocation and multiple memory-bound CUDA kern
   - PyTorch's native C++/CUDA kernel computes the softmax and negative log likelihood in a single fused pass.
   - Avoids storing large dense probability matrices in GPU memory.
   - Maintains exact numerical compatibility with the training loop and perplexity calculations.
+  - Aligns code with modern industry standards (Transformers, PyTorch sequence modeling).
+
+### 6.3 Actual Profiling Data
+
+```
+# Profile at Batch Size 256 (BF16 AMP + Fused CrossEntropyLoss)
+Average GPU Utilization: 40.59%
+Peak GPU Utilization:    90.00%
+Max VRAM Used:          13712.00 MB
+Time for 1 Epoch:       144.86 sec  (7.3x faster than baseline)
+Throughput:             21,994.75 words/sec
+Final Dev Perplexity:   24.32
+```
