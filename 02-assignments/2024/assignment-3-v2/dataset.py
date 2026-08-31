@@ -13,6 +13,9 @@ from torch.utils.data import Dataset, DataLoader
 from torch.nn.utils.rnn import pad_sequence
 import sentencepiece as spm
 
+import logging
+logger = logging.getLogger('nmt.dataset')
+
 
 class TranslationDataset(Dataset):
     """
@@ -75,7 +78,11 @@ class TranslationDataset(Dataset):
 
                 # Encode target line: add <s> (start) and </s> (end) special tokens
                 tgt_pieces = ["<s>"] + self.sp_tgt.encode_as_pieces(line_tgt.strip()) + ["</s>"]
+                logger.debug(f"===line_idx={line_idx}===")
+                logger.debug(f"tgt_pieces={tgt_pieces}")
+
                 tgt_ids = [self.tgt_vocab[p] for p in tgt_pieces]
+                logger.debug(f"tgt_ids={tgt_ids}")
 
                 self.src_data.append(src_ids)
                 self.tgt_data.append(tgt_ids)
