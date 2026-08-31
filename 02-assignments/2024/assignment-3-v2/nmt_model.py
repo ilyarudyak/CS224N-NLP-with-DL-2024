@@ -64,6 +64,9 @@ class NMT(nn.Module):
         self.gen_sanity_check = False
         self.counter = 0
 
+        # Loss function with automatic padding token exclusion
+        self.loss_fn = nn.CrossEntropyLoss(ignore_index=vocab.tgt['<pad>'], reduction='none')
+
     def forward(self, source_padded: torch.Tensor, source_lengths: List[int], target_padded: torch.Tensor) -> torch.Tensor:
         """ Take a mini-batch of pre-padded source and target sentence tensors, compute the log-likelihood of
         target sentences under the language models learned by the NMT system.
@@ -78,25 +81,27 @@ class NMT(nn.Module):
                                     log-likelihood of generating the gold-standard target sentence for
                                     each example in the input batch. Here b = batch size.
         """
-        ###     Run the network forward:
-        ###     1. Apply the encoder to `source_padded` by calling `self.encode()`
-        ###     2. Generate sentence masks for `source_padded` by calling `self.generate_sent_masks()`
-        ###     3. Apply the decoder to compute combined-output by calling `self.decode()`
-        ###     4. Compute log probability distribution over the target vocabulary using the
-        ###        combined_outputs returned by the `self.decode()` function.
-
         enc_hiddens, dec_init_state = self.encode(source_padded, source_lengths)
         enc_masks = self.generate_sent_masks(enc_hiddens, source_lengths)
         combined_outputs = self.decode(enc_hiddens, enc_masks, dec_init_state, target_padded)
-        P = F.log_softmax(self.target_vocab_projection(combined_outputs), dim=-1)
 
-        # Zero out, probabilities for which we have nothing in the target text
-        target_masks = (target_padded != self.vocab.tgt['<pad>']).float()
+        # 1. Compute raw unnormalized logits over the target vocabulary
+        # combined_outputs shape: (tgt_len - 1, batch_size, hidden_size)
+        logits = self.target_vocab_projection(combined_outputs)  # shape: (tgt_len - 1, batch_size, vocab_size)
 
-        # Compute log probability of generating true target words
-        target_gold_words_log_prob = torch.gather(P, index=target_padded[1:].unsqueeze(-1), dim=-1).squeeze(
-            -1) * target_masks[1:]
-        scores = target_gold_words_log_prob.sum(dim=0)
+        # 2. Target labels to predict (omitting initial <s> at index 0)
+        target_gold = target_padded[1:]  # shape: (tgt_len - 1, batch_size)
+
+        # 3. Compute cross-entropy loss in a single fused CUDA kernel
+        tgt_len_m1, batch_size, vocab_size = logits.shape
+        loss_matrix = self.loss_fn(
+            logits.reshape(tgt_len_m1 * batch_size, vocab_size),
+            target_gold.reshape(tgt_len_m1 * batch_size)
+        ).reshape(tgt_len_m1, batch_size)
+
+        # Sum per-word negative log-likelihoods over target sequence length -> (batch_size,)
+        # Return negative cross entropy to match log-likelihood scores: scores = -sum(CE)
+        scores = -loss_matrix.sum(dim=0)
         return scores
 
     def encode(self, source_padded: torch.Tensor, source_lengths: List[int]) -> Tuple[
