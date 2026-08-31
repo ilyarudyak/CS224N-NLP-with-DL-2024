@@ -72,15 +72,18 @@ class TranslationDataset(Dataset):
                 if max_samples is not None and line_idx >= max_samples:
                     break
 
-                # Encode source line into subword pieces, then map to integer token IDs
+                # 1.1) Encode source line into subword token using SentencePiece (pre-trained model)
                 src_pieces = self.sp_src.encode_as_pieces(line_src.strip())
+
+                # 2.1) Map source tokens to integer IDs using the source vocabulary (pre-built vocabulary)
                 src_ids = [self.src_vocab[p] for p in src_pieces]
 
-                # Encode target line: add <s> (start) and </s> (end) special tokens
+                # 1.2) Encode target line: add <s> (start) and </s> (end) special tokens
                 tgt_pieces = ["<s>"] + self.sp_tgt.encode_as_pieces(line_tgt.strip()) + ["</s>"]
                 logger.debug(f"===line_idx={line_idx}===")
                 logger.debug(f"tgt_pieces={tgt_pieces}")
-
+                
+                # 2.2) Map target tokens to integer IDs using the target vocabulary (pre-built vocabulary)
                 tgt_ids = [self.tgt_vocab[p] for p in tgt_pieces]
                 logger.debug(f"tgt_ids={tgt_ids}")
 
@@ -97,6 +100,7 @@ class TranslationDataset(Dataset):
         @returns (src_ids, tgt_ids): Tuple of 1D LongTensors.
         """
         return (
+            # Convert source and target lists of integer IDs to PyTorch LongTensors
             torch.tensor(self.src_data[idx], dtype=torch.long),
             torch.tensor(self.tgt_data[idx], dtype=torch.long),
         )
