@@ -47,6 +47,8 @@ Options:
     --max-decoding-time-step=<int>          maximum number of decoding time steps [default: 70]
     --num-workers=<int>                     number of data loader workers [default: 0]
     --pin-memory                            enable pinned memory in DataLoader
+    --amp                                   enable Automatic Mixed Precision (AMP)
+    --precision=<str>                       precision type: bf16, fp16, auto [default: auto]
     --max-samples=<int>                     maximum training samples to load for debugging
 """
 import math
@@ -71,11 +73,13 @@ import torch.nn.utils
 from torch.utils.tensorboard import SummaryWriter
 
 
-def evaluate_ppl(model, dev_loader, device):
+def evaluate_ppl(model, dev_loader, device, amp_dtype=torch.float32, use_amp=False):
     """ Evaluate perplexity on dev dataset using DataLoader
     @param model (NMT): NMT Model
     @param dev_loader (DataLoader): DataLoader for dev set
     @param device (torch.device): Device to place batches on
+    @param amp_dtype (torch.dtype): Data type for mixed precision
+    @param use_amp (bool): Whether mixed precision is enabled
     @returns ppl (perplexity on dev sentences)
     """
     was_training = model.training
@@ -85,17 +89,18 @@ def evaluate_ppl(model, dev_loader, device):
     cum_tgt_words = 0.0
 
     with torch.no_grad():
-        for src_padded, src_lengths, tgt_padded in dev_loader:
-            src_padded = src_padded.to(device, non_blocking=True)
-            tgt_padded = tgt_padded.to(device, non_blocking=True)
+        with torch.autocast(device_type=device.type, dtype=amp_dtype, enabled=use_amp):
+            for src_padded, src_lengths, tgt_padded in dev_loader:
+                src_padded = src_padded.to(device, non_blocking=True)
+                tgt_padded = tgt_padded.to(device, non_blocking=True)
 
-            loss = -model(src_padded, src_lengths, tgt_padded).sum()
+                loss = -model(src_padded, src_lengths, tgt_padded).sum()
 
-            cum_loss += loss.item()
-            # Count target words to predict, omitting leading <s> (row 0) and <pad> tokens
-            pad_id = model.vocab.tgt['<pad>']
-            tgt_word_num_to_predict = (tgt_padded[1:] != pad_id).sum().item()
-            cum_tgt_words += tgt_word_num_to_predict
+                cum_loss += loss.item()
+                # Count target words to predict, omitting leading <s> (row 0) and <pad> tokens
+                pad_id = model.vocab.tgt['<pad>']
+                tgt_word_num_to_predict = (tgt_padded[1:] != pad_id).sum().item()
+                cum_tgt_words += tgt_word_num_to_predict
 
         ppl = np.exp(cum_loss / cum_tgt_words) if cum_tgt_words > 0 else float('inf')
 
@@ -215,7 +220,35 @@ def train(args: Dict):
     # Step TRAIN-4: Set up optimizer
     optimizer = torch.optim.Adam(model.parameters(), lr=float(args['--lr']))
 
-    # Step TRAIN-5: Training loop
+    # Step TRAIN-5: Set up Automatic Mixed Precision (AMP)
+    use_amp = bool(args['--amp'])
+    precision_str = args['--precision'].lower() if args['--precision'] else 'auto'
+
+    if use_amp:
+        if device.type == 'cuda':
+            if precision_str == 'bf16' or (precision_str == 'auto' and torch.cuda.is_bf16_supported()):
+                amp_dtype = torch.bfloat16
+                precision_name = "bfloat16"
+            else:
+                amp_dtype = torch.float16
+                precision_name = "float16"
+        elif device.type == 'mps':
+            amp_dtype = torch.float16
+            precision_name = "float16"
+        else:
+            amp_dtype = torch.bfloat16 if (precision_str in ['bf16', 'auto'] and hasattr(torch, 'bfloat16')) else torch.float32
+            precision_name = "bfloat16" if amp_dtype == torch.bfloat16 else "float32"
+        print(f'enabled Automatic Mixed Precision (AMP): {precision_name}', file=sys.stderr)
+    else:
+        amp_dtype = torch.float32
+        precision_name = "float32"
+
+    try:
+        scaler = torch.amp.GradScaler(device.type, enabled=(use_amp and amp_dtype == torch.float16))
+    except (AttributeError, TypeError):
+        scaler = torch.cuda.amp.GradScaler(enabled=(use_amp and amp_dtype == torch.float16 and device.type == 'cuda'))
+
+    # Step TRAIN-6: Training loop
     num_trial = 0
     train_iter = patience = cum_loss = report_loss = cum_tgt_words = report_tgt_words = 0
     cum_examples = report_examples = epoch = valid_num = 0
@@ -237,16 +270,21 @@ def train(args: Dict):
             src_padded = src_padded.to(device, non_blocking=True)
             tgt_padded = tgt_padded.to(device, non_blocking=True)
 
-            example_losses = -model(src_padded, src_lengths, tgt_padded) # (batch_size,)
-            batch_loss = example_losses.sum()
-            loss = batch_loss / batch_size
+            with torch.autocast(device_type=device.type, dtype=amp_dtype, enabled=use_amp):
+                example_losses = -model(src_padded, src_lengths, tgt_padded) # (batch_size,)
+                batch_loss = example_losses.sum()
+                loss = batch_loss / batch_size
 
-            loss.backward()
-
-            # Clip gradient
-            grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), clip_grad)
-
-            optimizer.step()
+            if scaler.is_enabled():
+                scaler.scale(loss).backward()
+                scaler.unscale_(optimizer)
+                grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), clip_grad)
+                scaler.step(optimizer)
+                scaler.update()
+            else:
+                loss.backward()
+                grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), clip_grad)
+                optimizer.step()
 
             batch_losses_val = batch_loss.item()
             report_loss += batch_losses_val
@@ -286,7 +324,7 @@ def train(args: Dict):
                 print('begin validation ...', file=sys.stderr)
 
                 # Compute dev. ppl
-                dev_ppl = evaluate_ppl(model, dev_loader, device=device)
+                dev_ppl = evaluate_ppl(model, dev_loader, device=device, amp_dtype=amp_dtype, use_amp=use_amp)
                 example_hypothesis_beam = beam_search(
                     model, [example_sentence_src],
                     beam_size=10,

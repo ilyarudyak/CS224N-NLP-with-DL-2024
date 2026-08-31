@@ -8,6 +8,7 @@ if [ "$1" = "train" ]; then
 		--dev-tgt=./zh_en_data/dev.en \
 		--vocab=vocab.json \
 		--cuda \
+		--amp \
 		--pin-memory \
 		--num-workers=2 \
 		--lr=5e-4 \
@@ -26,6 +27,7 @@ elif [ "$1" = "train_a100" ]; then
 		--dev-tgt=./zh_en_data/dev.en \
 		--vocab=vocab.json \
 		--cuda \
+		--amp \
 		--pin-memory \
 		--num-workers=4 \
 		--lr=5e-4 \
