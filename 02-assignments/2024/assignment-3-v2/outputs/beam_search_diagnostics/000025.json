@@ -1,0 +1,72 @@
+{
+    "example_source": [
+        "▁我还",
+        "澄清",
+        "了",
+        "在该",
+        "会议上",
+        "提出的",
+        "若干",
+        "事项",
+        "。"
+    ],
+    "example_target": [
+        "<s>",
+        "▁i",
+        "▁was",
+        "▁able",
+        "▁to",
+        "▁provide",
+        "▁clarification",
+        "▁on",
+        "▁some",
+        "▁of",
+        "▁the",
+        "▁matters",
+        "▁which",
+        "▁were",
+        "▁raised",
+        "▁at",
+        "▁that",
+        "▁meeting",
+        ".",
+        "</s>"
+    ],
+    "hypotheses": [
+        {
+            "hypothesis": [],
+            "score": -3.1580569744110107
+        },
+        {
+            "hypothesis": [
+                "▁the"
+            ],
+            "score": -5.6033549308776855
+        },
+        {
+            "hypothesis": [
+                "▁the",
+                "▁the"
+            ],
+            "score": -8.128581047058105
+        },
+        {
+            "hypothesis": [
+                "▁the",
+                "▁the",
+                "▁the"
+            ],
+            "score": -10.686336517333984
+        },
+        {
+            "hypothesis": [
+                "▁the",
+                "▁the",
+                "▁the",
+                "▁the"
+            ],
+            "score": -13.2476806640625
+        }
+    ],
+    "diagnostic_info": "eyJ0IjogIjIwMjYtMDgtMzFUMTc6MjA6NDMuNDk4MDMzIiwgImgiOiAiaWxpYXJ1ZGlhay1tYWNib29rLmxvY2FsIiwgInUiOiAicm9vdCJ9"
+}
