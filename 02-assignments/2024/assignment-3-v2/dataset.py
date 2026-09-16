@@ -72,20 +72,35 @@ class TranslationDataset(Dataset):
                 if max_samples is not None and line_idx >= max_samples:
                     break
 
+                if line_idx in [0, 1]:
+                    logger.debug(f"===line_idx={line_idx}===")
+
+                if line_idx in [0, 1]:
+                    logger.debug(f"line_src={line_src}")
+                    logger.debug(f"line_tgt={line_tgt}")
+
                 # 1.1) Encode source line into subword token using SentencePiece (pre-trained model)
                 src_pieces = self.sp_src.encode_as_pieces(line_src.strip())
+
+                if line_idx in [0, 1]:
+                    logger.debug(f"src_pieces={src_pieces}")
 
                 # 2.1) Map source tokens to integer IDs using the source vocabulary (pre-built vocabulary)
                 src_ids = [self.src_vocab[p] for p in src_pieces]
 
+                if line_idx in [0, 1]:
+                    logger.debug(f"len={len(src_ids)} src_ids={src_ids}")
+
                 # 1.2) Encode target line: add <s> (start) and </s> (end) special tokens
                 tgt_pieces = ["<s>"] + self.sp_tgt.encode_as_pieces(line_tgt.strip()) + ["</s>"]
-                logger.debug(f"===line_idx={line_idx}===")
-                logger.debug(f"tgt_pieces={tgt_pieces}")
+                if line_idx in [0, 1]:
+                    logger.debug(f"tgt_pieces={tgt_pieces}")
                 
                 # 2.2) Map target tokens to integer IDs using the target vocabulary (pre-built vocabulary)
                 tgt_ids = [self.tgt_vocab[p] for p in tgt_pieces]
-                logger.debug(f"tgt_ids={tgt_ids}")
+
+                if line_idx in [0, 1]:
+                    logger.debug(f"len={len(tgt_ids)} tgt_ids={tgt_ids}")
 
                 self.src_data.append(src_ids)
                 self.tgt_data.append(tgt_ids)
@@ -111,7 +126,7 @@ class TranslationCollate:
     Collate callable for batching TranslationDataset samples:
     1. Sorts the batch by source sequence length in descending order (required for pack_padded_sequence).
     2. Measures source lengths.
-    3. Pads source and target sequences to batch maximum lengths using pad_sequence.
+    3. Pads source and target sequences to batch maximum lengths using pad_sequence. (dynamic padding)
     4. Returns tensors shaped (src_len, batch_size) and (tgt_len, batch_size).
     """
 

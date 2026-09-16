@@ -45,21 +45,39 @@ class NMT(nn.Module):
         @param dropout_rate (float): Dropout probability, for attention
         """
         super(NMT, self).__init__()
+
+        logger.debug("===INIT NMT MODEL===")
+
         self.model_embeddings = ModelEmbeddings(embed_size, vocab)
         self.hidden_size = hidden_size
         self.dropout_rate = dropout_rate
         self.vocab = vocab
+        logger.debug(f"Embed size: {embed_size}, Hidden size: {hidden_size}, Dropout rate: {dropout_rate}")
+        # Log vocab size
+        logger.debug(f"Source vocab size: {len(vocab.src)}, Target vocab size: {len(vocab.tgt)}")
 
-        # default values
+        # Encoder components
+        # Apply a 1D convolution to the embeddings before feeding them into the encoder LSTM
         self.post_embed_cnn = nn.Conv1d(in_channels=embed_size, out_channels=embed_size, kernel_size=2, padding="same")
+        # Encoder LSTM layer: bidirectional=True, num_layers=1
         self.encoder = nn.LSTM(input_size=embed_size, hidden_size=hidden_size, bidirectional=True, bias=True)
-        self.decoder = nn.LSTMCell(input_size=embed_size + hidden_size, hidden_size=hidden_size, bias=True)
+        # Linear projections from last_hidden to decoder initial hidden: [2 * hidden_size] -> [hidden_size]
         self.h_projection = nn.Linear(in_features=2 * hidden_size, out_features=hidden_size, bias=False)
+        # Linear projection from last_cell to decoder initial cell: [2 * hidden_size] -> [hidden_size]
         self.c_projection = nn.Linear(in_features=2 * hidden_size, out_features=hidden_size, bias=False)
+
+
+        # Decoder components
+        # Decode contains an LSTM cell to manually unroll the decoding steps one token at a time
+        # It's input size is for a context vector Ybar_t: concatentaion of 
+        #   - input embedding Y_t [batch_size, embed_size] and
+        #   - combined-output vector o_prev [batch_size, hidden_size]
+        self.decoder = nn.LSTMCell(input_size=embed_size + hidden_size, hidden_size=hidden_size, bias=True)
         self.att_projection = nn.Linear(in_features=2 * hidden_size, out_features=hidden_size, bias=False)
         self.combined_output_projection = nn.Linear(in_features=hidden_size + 2 * hidden_size, out_features=hidden_size, bias=False)
         self.target_vocab_projection = nn.Linear(in_features=hidden_size, out_features=len(vocab.tgt), bias=False)
         self.dropout = nn.Dropout(p=dropout_rate)
+
         # For sanity check only, not relevant to implementation
         self.gen_sanity_check = False
         self.counter = 0
@@ -81,27 +99,48 @@ class NMT(nn.Module):
                                     log-likelihood of generating the gold-standard target sentence for
                                     each example in the input batch. Here b = batch size.
         """
-        enc_hiddens, dec_init_state = self.encode(source_padded, source_lengths)
-        enc_masks = self.generate_sent_masks(enc_hiddens, source_lengths)
-        combined_outputs = self.decode(enc_hiddens, enc_masks, dec_init_state, target_padded)
+        logger.debug(f"===FORWARD PASS===")
 
-        # 1. Compute raw unnormalized logits over the target vocabulary
+        # (1) Encode the source sentences and obtain initial decoder state
+        # enc_hiddens: [src_len, batch_size, hidden_size]
+        # dec_init_state = (dec_hidden, dec_cell) 
+        # dec_hidden, dec_cell: [batch_size, hidden_size]
+        enc_hiddens, dec_init_state = self.encode(source_padded, source_lengths)
+        logger.debug(f"(1) enc_hiddens shape: {enc_hiddens.shape}")
+
+        # (2a) Generate masks for the encoder hidden states based on source sentence lengths
+        logger.debug(f"(2a) source_lengths: {source_lengths}")
+        enc_masks = self.generate_sent_masks(enc_hiddens, source_lengths)
+        logger.debug(f"(2a) enc_masks shape: {enc_masks.shape}")
+        logger.debug(f"(2a) enc_masks :\n{enc_masks}")
+
+        # (2b) Decode the target sentences using the encoder hidden states, masks, and initial decoder state
+        # combined_outputs: [tgt_len - 1, batch_size, hidden_size]
+        combined_outputs = self.decode(enc_hiddens, enc_masks, dec_init_state, target_padded) 
+        logger.debug(f"(2b) combined_outputs shape: {combined_outputs.shape}")
+
+        # (3a). Compute raw unnormalized logits over the target vocabulary
         # combined_outputs shape: (tgt_len - 1, batch_size, hidden_size)
         logits = self.target_vocab_projection(combined_outputs)  # shape: (tgt_len - 1, batch_size, vocab_size)
+        logger.debug(f"(3a) logits shape: {logits.shape}")
 
-        # 2. Target labels to predict (omitting initial <s> at index 0)
+        # (3b). Target labels to predict (omitting initial <s> at index 0)
         target_gold = target_padded[1:]  # shape: (tgt_len - 1, batch_size)
+        logger.debug(f"(3b) target_gold shape: {target_gold.shape}")
 
-        # 3. Compute cross-entropy loss in a single fused CUDA kernel
+        # (3c). Compute cross-entropy loss in a single fused CUDA kernel
         tgt_len_m1, batch_size, vocab_size = logits.shape
         loss_matrix = self.loss_fn(
             logits.reshape(tgt_len_m1 * batch_size, vocab_size),
             target_gold.reshape(tgt_len_m1 * batch_size)
         ).reshape(tgt_len_m1, batch_size)
 
-        # Sum per-word negative log-likelihoods over target sequence length -> (batch_size,)
+        # (3d). Sum per-word negative log-likelihoods over target sequence length -> (batch_size,)
         # Return negative cross entropy to match log-likelihood scores: scores = -sum(CE)
-        scores = -loss_matrix.sum(dim=0)
+        # logger.debug(f"(3c) loss_matrix shape: {loss_matrix.shape}")
+        scores = -loss_matrix.sum(dim=0) # [batch_size]
+        logger.debug(f"(3d) scores shape: {scores.shape}")
+
         return scores
 
     def encode(self, source_padded: torch.Tensor, source_lengths: List[int]) -> Tuple[
@@ -118,38 +157,38 @@ class NMT(nn.Module):
         @returns dec_init_state (tuple(Tensor, Tensor)): Tuple of tensors representing the decoder's initial
                                                 hidden state and cell.
         """
-        logger.debug(f"====Running encode()=====")
-        logger.debug(f"source_padded shape: {source_padded.shape}, source_lengths: {source_lengths}")
+        # logger.debug(f"---Running encode()---")
+        # logger.debug(f"source_padded shape: {source_padded.shape}, source_lengths: {source_lengths}")
         enc_hiddens, dec_init_state = None, None
 
-        # 1. Construct Tensor `X` of source sentences with shape (src_len, b, e) using the source model embeddings.
+        # 1. Embed source sentences using the source model embeddings.
         X = self.model_embeddings.source(source_padded)  # [src_len, batch_size, embed_size]
-        logger.debug(f"(1) X shape after embedding: {X.shape}")
+        # logger.debug(f"(1) X shape after embedding: {X.shape}")
 
         # 2. Apply the post_embed_cnn layer
         # Shape of X is not changed by CNN because we use padding="same"
         X = X.permute(1, 2, 0)  # [batch_size, embed_size, src_len]
         X = self.post_embed_cnn(X)  # [batch_size, embed_size, src_len]
         X = X.permute(2, 0, 1)  # [src_len, batch_size, embed_size]
-        logger.debug(f"(2) X shape after post_embed_cnn: {X.shape}")
+        # logger.debug(f"(2) X shape after post_embed_cnn: {X.shape}")
 
         # 3. Compute `enc_hiddens`, `last_hidden`, `last_cell` by applying the encoder to `X`.
         X = nn.utils.rnn.pack_padded_sequence(X, source_lengths, enforce_sorted=False)
         # last_hidden shape: [2, batch_size, hidden_size], last_cell shape: [2, batch_size, hidden_size]
         enc_hiddens_packed, (last_hidden, last_cell) = self.encoder(X)
         enc_hiddens, _ = nn.utils.rnn.pad_packed_sequence(enc_hiddens_packed) # [src_len, batch_size, hidden_size*2]
-        logger.debug(f"(3) enc_hiddens shape after encoder: {enc_hiddens.shape}")
-        logger.debug(f"(3) last_hidden shape: {last_hidden.shape}, last_cell shape: {last_cell.shape}")
+        # logger.debug(f"(3) enc_hiddens shape after encoder: {enc_hiddens.shape}")
+        # logger.debug(f"(3) last_hidden shape: {last_hidden.shape}, last_cell shape: {last_cell.shape}")
         enc_hiddens = enc_hiddens.permute(1, 0, 2)  # [batch_size, src_len, hidden_size*2]
-        logger.debug(f"(3) enc_hiddens shape after permute: {enc_hiddens.shape}")
+        # logger.debug(f"(3) enc_hiddens shape after permute: {enc_hiddens.shape}")
 
         # 4. Compute `dec_init_state` = (init_decoder_hidden, init_decoder_cell)
         last_hidden = torch.cat([last_hidden[0], last_hidden[1]], dim=-1)  # [batch_size, 2*hidden_size]
-        logger.debug(f"(4) last_hidden shape after concatenation: {last_hidden.shape}")
+        # logger.debug(f"(4) last_hidden shape after concatenation: {last_hidden.shape}")
         last_cell = torch.cat([last_cell[0], last_cell[1]], dim=-1)  # [batch_size, 2*hidden_size]
-        logger.debug(f"(4) last_cell shape after concatenation: {last_cell.shape}")
-        dec_init_state = (self.h_projection(last_hidden), self.c_projection(last_cell))
-        logger.debug(f"(4) dec_init_state[0] shape: {dec_init_state[0].shape}, dec_init_state[1] shape: {dec_init_state[1].shape}")
+        # logger.debug(f"(4) last_cell shape after concatenation: {last_cell.shape}")
+        dec_init_state = (self.h_projection(last_hidden), self.c_projection(last_cell)) # [batch_size, hidden_size]
+        # logger.debug(f"(4) dec_init_state[0] shape: {dec_init_state[0].shape}, dec_init_state[1] shape: {dec_init_state[1].shape}")
 
         return enc_hiddens, dec_init_state
 
@@ -168,34 +207,55 @@ class NMT(nn.Module):
         @returns combined_outputs (Tensor): combined output tensor  (tgt_len, b,  h), where
                                         tgt_len = maximum target sentence length, b = batch_size,  h = hidden size
         """
-        # Chop off the <END> token for max length sentences.
+
+        # logger.debug(f"---Running decode()---")
+        
+        # (1a) Chop off the <END> token for max length sentences.
+        # This is teacher forcing: we remove EOS from the target sentences
+        # and EOS from labels.
+        # logger.debug(f"(1a) target_padded shape before removing EOS: {target_padded.shape}")
         target_padded = target_padded[:-1]
+        # logger.debug(f"(1a) target_padded shape after removing EOS: {target_padded.shape}")
 
-        # Initialize the decoder state (hidden and cell)
+        # (1b) Initialize the decoder state (hidden and cell)
         dec_state = dec_init_state
+        # logger.debug(f"(1b) dec_init_state type: {type(dec_init_state)}")
+        # logger.debug(f"(1b) dec_state[0] shape: {dec_state[0].shape}")
+        # logger.debug(f"(1b) dec_state[1] shape: {dec_state[1].shape}")
 
-        # Initialize previous combined output vector o_{t-1} as zero
+        # (2a)Initialize previous combined output vector o_{t-1} as zero
         batch_size = enc_hiddens.size(0)
+        # logger.debug(f"(2a) batch_size: {batch_size}")
         o_prev = torch.zeros(batch_size, self.hidden_size, device=self.device)
 
         # Initialize a list we will use to collect the combined output o_t on each step
         combined_outputs = []
 
-        # 1. Apply the attention projection layer to `enc_hiddens` to obtain `enc_hiddens_proj`
+        # (2b) Apply the attention projection layer to `enc_hiddens` to obtain `enc_hiddens_proj`
+        # logger.debug(f"(2b) enc_hiddens shape: {enc_hiddens.shape}")
         enc_hiddens_proj = self.att_projection(enc_hiddens)  # [batch_size, src_len, hidden_size]
+        # logger.debug(f"(2b) enc_hiddens_proj shape: {enc_hiddens_proj.shape}")
 
-        # 2. Construct tensor `Y` of target sentences with shape (tgt_len, b, e) using the target model embeddings.
-        Y = self.model_embeddings.target(target_padded)  # [tgt_len, batch_size, embed_size]
+        # (3a) Construct tensor `Y` of target sentences with shape (tgt_len, b, e) using the target model embeddings.
+        # logger.debug(f"(3a) target_padded shape: {target_padded.shape}")
+        Y = self.model_embeddings.target(target_padded)  # [tgt_len-1, batch_size, embed_size]
 
-        # 3. Iterate over the time dimension of Y
+        # (3b) Iterate over the target sequence one step at a time
+        # In other words, manually unroll the Decoder cell for each token in the target sequence.
+        count = 0
         for Y_t in torch.split(Y, 1, dim=0):
+            # if count == 0: logger.debug(f"(3b) Y_t shape before squeeze: {Y_t.shape}")
             Y_t = Y_t.squeeze(0)  # [batch_size, embed_size]
+            # if count == 0: logger.debug(f"(3b) Y_t shape after squeeze: {Y_t.shape}")
+            # if count == 0: logger.debug(f"(3b) o_prev shape before cat: {o_prev.shape}")
             Ybar_t = torch.cat([Y_t, o_prev], dim=-1)  # [batch_size, embed_size + hidden_size]
-            dec_state, o_t, _ = self.step(Ybar_t, dec_state, enc_hiddens, enc_hiddens_proj, enc_masks)
+            # if count == 0: logger.debug(f"(3b) Ybar_t shape after cat: {Ybar_t.shape}")
+            dec_state, o_t, _ = self.step(Ybar_t, dec_state, enc_hiddens, enc_hiddens_proj, enc_masks, count)
             combined_outputs.append(o_t)
             o_prev = o_t
+            count += 1
 
-        # 4. Convert combined_outputs to a single tensor
+        # (4) Convert combined_outputs [o_0, o_1, ..., o_{T}] to a single tensor
         combined_outputs = torch.stack(combined_outputs, dim=0)  # [tgt_len, batch_size, hidden_size]
 
         return combined_outputs
@@ -204,7 +264,8 @@ class NMT(nn.Module):
              dec_state: Tuple[torch.Tensor, torch.Tensor],
              enc_hiddens: torch.Tensor,
              enc_hiddens_proj: torch.Tensor,
-             enc_masks: torch.Tensor) -> Tuple[Tuple, torch.Tensor, torch.Tensor]:
+             enc_masks: torch.Tensor,
+             count: int) -> Tuple[Tuple, torch.Tensor, torch.Tensor]:
         """ Compute one forward step of the LSTM decoder, including the attention computation.
 
         @param Ybar_t (Tensor): Concatenated Tensor of [Y_t o_prev], with shape (b, e + h). The input for the decoder,
@@ -226,38 +287,71 @@ class NMT(nn.Module):
                                       We are simply returning this value so that we can sanity check
                                       your implementation.
         """
-        # 1. Apply the decoder to `Ybar_t` and `dec_state` to obtain the new dec_state.
+        # if count == 0: logger.debug(f"---Running step()---")
+
+        ###########################################################################
+        # 1 Unroll a single step of the decoder
+        ###########################################################################
+
+        # Step 1: formula (6) from the assignment description
+
+        # (1a) Roll a single step of LSTM Cell with out contect vector Ybar_t and the previous decoder state.
+        # if count == 0: logger.debug(f"(1a) Ybar_t shape: {Ybar_t.shape}")
         dec_state = self.decoder(Ybar_t, dec_state)  # dec_state is a tuple of (dec_hidden, dec_cell), both shape (batch_size, hidden_size)
 
-        # 2. Split dec_state into its two parts (dec_hidden, dec_cell)
-        dec_hidden, dec_cell = dec_state  # both shape (batch_size, hidden_size)
+        # (1b) Split dec_state into its two parts 
+        dec_hidden, dec_cell = dec_state  # both shape [batch_size, hidden_size]
+        # if count == 0: logger.debug(f"(1b) dec_hidden shape: {dec_hidden.shape}, dec_cell state shape: {dec_cell.shape}")
 
-        # 3. Compute the attention scores e_t, a Tensor shape (b, src_len).
-        # dec_hidden shape: (batch_size, hidden_size)
-        # enc_hiddens_proj shape: (batch_size, src_len, hidden_size)
-        e_t = torch.bmm(enc_hiddens_proj, dec_hidden.unsqueeze(2)).squeeze(2)  # shape: (batch_size, src_len)
+        ###########################################################################
+        # 2 Classic 3-step attention mechanism
+        ###########################################################################
 
-        # Set e_t to -inf where enc_masks has 1
+        # All the operations in steps 2, 3 closely follow assignemnet notes.
+        # Step 2: formulas (7) - (9)
+        # Step 3: formulas (10) - (12)
+
+        # (2a) Compute the attention scores e_t, a Tensor shape (b, src_len).
+        # dec_hidden shape: [batch_size, hidden_size]
+        # enc_hiddens_proj shape: [batch_size, src_len, hidden_size]
+        # if count == 0: logger.debug(f"(2a) enc_hiddens_proj shape: {enc_hiddens_proj.shape}, dec_hidden shape: {dec_hidden.shape}")
+        # if count == 0: logger.debug(f"(2a) dec_hidden.unsqueeze(2) shape: {dec_hidden.unsqueeze(2).shape}")
+        e_t = torch.bmm(enc_hiddens_proj, dec_hidden.unsqueeze(2)).squeeze(2)  # shape: [batch_size, src_len]
+        # if count == 0: logger.debug(f"(2a) torch.bmm(enc_hiddens_proj, dec_hidden.unsqueeze(2)) shape: {torch.bmm(enc_hiddens_proj, dec_hidden.unsqueeze(2)).shape}")
+        # if count == 0: logger.debug(f"(2a) e_t shape: {e_t.shape}")
+
+        # (2b) Set e_t to -inf where enc_masks has 1
+        # In other words, ignore the positions in the source sequence that are padding tokens.
         if enc_masks is not None:
             e_t.data.masked_fill_(enc_masks.bool(), -float('inf'))
+        # if count == 0: logger.debug(f"(2b) e_t after masking:\n{e_t}")
 
-        # 1. Apply softmax to e_t to yield alpha_t
+        # (2c) Apply softmax to e_t to yield alpha_t
         alpha_t = F.softmax(e_t, dim=-1)  # [batch_size, src_len]
+        # if count == 0: logger.debug(f"(2c) alpha_t shape: {alpha_t.shape}")
 
-        # 2. Use batched matrix multiplication between alpha_t and enc_hiddens to obtain the attention output vector, a_t
+        # (2d) Use batched matrix multiplication between alpha_t and enc_hiddens to obtain the attention output vector, a_t
+        # if count == 0: logger.debug(f"(2d) alpha_t.unsqueeze(1) shape: {alpha_t.unsqueeze(1).shape}, enc_hiddens shape: {enc_hiddens.shape}")
         a_t = torch.bmm(alpha_t.unsqueeze(1), enc_hiddens).squeeze(1)  # [batch_size, 2*hidden_size]
+        # if count == 0: logger.debug(f"(2d) torch.bmm(alpha_t.unsqueeze(1), enc_hiddens) shape: {torch.bmm(alpha_t.unsqueeze(1), enc_hiddens).shape}")
 
-        # 3. Concatenate dec_hidden with a_t to compute tensor U_t
+        ###########################################################################
+        # 3 Variation of the classic attention mechanism: combined output
+        ###########################################################################
+
+        # (3a) Concatenate dec_hidden with a_t to compute tensor U_t
         dec_hidden, _ = dec_state  # [batch_size, hidden_size]
         U_t = torch.cat([dec_hidden, a_t], dim=-1)  # [batch_size, hidden_size + 2*hidden_size]
 
-        # 4. Apply the combined output projection layer to U_t to compute tensor V_t
+        # (3b) Apply the combined output projection layer to U_t to compute tensor V_t
         V_t = self.combined_output_projection(U_t)  # [batch_size, hidden_size]
 
-        # 5. Compute tensor O_t by first applying the Tanh function and then the dropout layer.
+        # (3c) Compute tensor O_t by first applying the Tanh function and then the dropout layer.
         O_t = self.dropout(torch.tanh(V_t))  # [batch_size, hidden_size]
+        # if count == 0: logger.debug(f"(3c) O_t shape: {O_t.shape}")
 
         combined_output = O_t
+
         return dec_state, combined_output, e_t
 
     def generate_sent_masks(self, enc_hiddens: torch.Tensor, source_lengths: List[int]) -> torch.Tensor:
