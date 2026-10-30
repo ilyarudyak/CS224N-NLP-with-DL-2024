@@ -26,6 +26,8 @@ class CharDataset(Dataset):
     def __init__(self, 
                  data: str, 
                  tokenizer: CharTokenizer, 
+                 # Maximum sequence or context length for the model
+                 # Used in the play_char.ipynb notebook for context length
                  block_size: int = 128):
 
         # Set the data and the tokenizer for the dataset
@@ -39,11 +41,11 @@ class CharDataset(Dataset):
         self.block_size = block_size
 
         # Report the number of characters in the dataset
-        print(f'Read {len(self.data):,} characters')
+        print(f'Dataset with {len(self.data):,} characters')
         # Report the block size for the dataset
         print(f'Set block size to {self.block_size}')
         # Report the vocabulary size for the dataset
-        print(f'Vocabulary size: {self.tokenizer.vocab_size}')
+        print(f'Vocabulary size of tokenizer: {self.tokenizer.vocab_size}')
         
     def __len__(self):
         return len(self.data) - self.block_size
@@ -60,3 +62,10 @@ class CharDataset(Dataset):
         y = chunk[1:]
 
         return x, y
+
+def make_datasets(text: str, tokenizer: CharTokenizer, block_size: int = 128,
+                  val_fraction: float = 0.1):
+    split = int(len(text) * (1 - val_fraction))
+    train_ds = CharDataset(text[:split], tokenizer, block_size)
+    val_ds = CharDataset(text[split:], tokenizer, block_size)
+    return train_ds, val_ds
