@@ -94,8 +94,10 @@ class Block(nn.Module):
         )
 
     def forward(self, x):
+        # x: [B, T, C] where B is batch size, T is sequence length, and C is embedding dimension
         x = x + self.attn(self.ln1(x))
         x = x + self.mlp(self.ln2(x))
+        # output: [B, T, C] same shape as input
         return x
 
 class GPT(nn.Module):
@@ -104,13 +106,18 @@ class GPT(nn.Module):
     def __init__(self, config):
         super().__init__()
 
-        # input embedding stem
-        self.tok_emb = nn.Embedding(config.vocab_size, config.n_embd)
-        self.pos_emb = nn.Parameter(torch.zeros(1, config.block_size, config.n_embd))
+        # (1) Input Embeddings 
+        # Token embeddings 
+        self.tok_emb = nn.Embedding(config.vocab_size, config.n_embd) # [vocab_size, n_embd]
+        # Position embeddings
+        self.pos_emb = nn.Parameter(torch.zeros(1, config.block_size, config.n_embd)) # [1, block_size, n_embd]
+        # Dropout for embeddings: applied after adding token and position embeddings
         self.drop = nn.Dropout(config.embd_pdrop)
-        # transformer
+
+        # (2) Transformer blocks for processing the embeddings: number of blocks == n_layer
         self.blocks = nn.Sequential(*[Block(config) for _ in range(config.n_layer)])
-        # decoder head
+
+        # (3) Decoder head: final layer norm and linear projection to vocabulary size (after ALL transformer blocks)
         self.ln_f = nn.LayerNorm(config.n_embd)
         self.head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
 
@@ -181,11 +188,15 @@ class GPT(nn.Module):
         b, t = idx.size()
         assert t <= self.block_size, "Cannot forward, model block size is exhausted."
 
-        # forward the GPT model
+        # (1) Token and position embeddings for the input sequence
         token_embeddings = self.tok_emb(idx) # each index maps to a (learnable) vector
         position_embeddings = self.pos_emb[:, :t, :] # each position maps to a (learnable) vector
         x = self.drop(token_embeddings + position_embeddings)
+
+        # (2) Transformer blocks for processing the embeddings: number of blocks == n_layer
         x = self.blocks(x)
+
+        # (3) Final layer norm and language modeling head (after ALL transformer blocks)
         x = self.ln_f(x)
         logits = self.head(x)
 
