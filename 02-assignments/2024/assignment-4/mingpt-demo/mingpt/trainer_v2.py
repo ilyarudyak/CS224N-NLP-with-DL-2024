@@ -14,12 +14,16 @@ import torch.optim as optim
 from torch.optim.lr_scheduler import LambdaLR
 from torch.utils.data.dataloader import DataLoader
 
-logger = logging.getLogger(__name__)
+from mingpt.dataset_v2 import CharDataset, CharTokenizer, make_datasets
+from mingpt.model_v2 import GPT, GPTConfig
+from mingpt.utils import sample
+
+logger = logging.getLogger("mingpt.trainer_v2")
 
 class TrainerConfig:
 
     # (1) Main training parameters
-    max_epochs = 10
+    max_epochs = 2
     batch_size = 64
     learning_rate = 3e-4
 
@@ -56,7 +60,7 @@ class TrainerConfigA100(TrainerConfig):
 
     # (3) Learning rate decay parameters (used in play_char.ipynb)
     lr_decay = True
-    warmup_tokens = 512 * 20
+    warmup_tokens = 512 * 20 * 128
     # We set final_tokens later on since it is not a fixed value
     # final_tokens=2*len(train_dataset)*block_size
 
@@ -73,6 +77,7 @@ def make_loaders(train_dataset, val_dataset, config):
         pin_memory=config.pin_memory,
         persistent_workers=config.num_workers > 0,   # keep workers alive between epochs
     )
+    logger.info(f"Created train loader with {len(train_loader)} batches")
     val_loader = None
     if val_dataset is not None:
         val_loader = DataLoader(
@@ -83,6 +88,7 @@ def make_loaders(train_dataset, val_dataset, config):
             pin_memory=config.pin_memory,
             persistent_workers=config.num_workers > 0,
         )
+        logger.info(f"Created val loader with {len(val_loader)} batches")
     return train_loader, val_loader
 
 class Trainer:
@@ -170,3 +176,97 @@ class Trainer:
 
             if self.config.ckpt_path is not None and improved:
                 self.save_checkpoint()
+
+def sample_shakespeare(tokenizer, model, trainer, context="O God, O God!"):
+
+    x = torch.tensor([tokenizer.stoi[s] for s in context], dtype=torch.long)[None,...].to(trainer.device)
+    y = sample(model, x, 2000, temperature=1.0, sample=True, top_k=10)[0]
+    completion = ''.join([tokenizer.itos[int(i)] for i in y])
+    print(completion)
+
+def train_on_toy_dataset(context="O God, O God!"):
+
+    # Load text 
+    text = open('input.txt', 'r').read()
+
+    # Create tokenizer
+    tokenizer = CharTokenizer(text)
+
+    # Split into train and validation sets
+    train_ds_toy, val_ds_toy = make_datasets(
+        text=text[:128*10], 
+        tokenizer=tokenizer,
+        val_fraction=0.2
+        )
+
+    # Create configuration for the model
+    model_config = GPTConfig(
+        vocab_size=tokenizer.vocab_size,
+        block_size=train_ds_toy.block_size,
+    )
+
+    # Create the model
+    model = GPT(model_config)
+
+    # Create trainer config
+    trainer_config = TrainerConfig(
+        lr_decay=False
+    )
+
+    # Create the trainer
+    trainer = Trainer(
+        model=model,
+        train_dataset=train_ds_toy,
+        val_dataset=val_ds_toy,
+        config=trainer_config
+        )
+
+    # Start training
+    trainer.train()
+
+    # Sample from the trained model
+    print("\n\n===Sampling from the trained model:===")
+    sample_shakespeare(tokenizer, model, trainer, context)
+
+def train_on_full_dataset_a100(context="O God, O God!"):
+
+    # Load text 
+    text = open('input.txt', 'r').read()
+
+    # Create tokenizer
+    tokenizer = CharTokenizer(text)
+
+    # Split into train and validation sets
+    train_ds_toy, val_ds_toy = make_datasets(
+        text=text, # Use the FULL dataset for training
+        tokenizer=tokenizer,
+        )
+
+    # Create configuration for the model
+    model_config = GPTConfig(
+        vocab_size=tokenizer.vocab_size,
+        block_size=train_ds_toy.block_size,
+    )
+
+    # Create the model
+    model = GPT(model_config)
+
+    # Create trainer config
+    trainer_config = TrainerConfig(
+        lr_decay=False
+    )
+
+    # Create the trainer
+    trainer = Trainer(
+        model=model,
+        train_dataset=train_ds_toy,
+        val_dataset=val_ds_toy,
+        config=trainer_config
+        )
+
+    # Start training
+    trainer.train()
+
+    # Sample from the trained model
+    print("\n\n===Sampling from the trained model:===")
+    sample_shakespeare(tokenizer, model, trainer, context)

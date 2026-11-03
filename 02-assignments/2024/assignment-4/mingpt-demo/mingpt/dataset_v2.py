@@ -1,6 +1,9 @@
 import torch
 from torch.utils.data import Dataset
 
+import logging
+logger = logging.getLogger("mingpt.dataset_v2")
+
 class CharTokenizer:
 
     def __init__(self, text: str):
@@ -40,12 +43,12 @@ class CharDataset(Dataset):
         #    2) due to future masking of fixed size.
         self.block_size = block_size
 
-        # Report the number of characters in the dataset
-        print(f'Dataset with {len(self.data):,} characters')
-        # Report the block size for the dataset
-        print(f'Set block size to {self.block_size}')
-        # Report the vocabulary size for the dataset
-        print(f'Vocabulary size of tokenizer: {self.tokenizer.vocab_size}')
+        # # Report the number of characters in the dataset
+        # print(f'Dataset with {len(self.data):,} characters')
+        # # Report the block size for the dataset
+        # print(f'Set block size to {self.block_size}')
+        # # Report the vocabulary size for the dataset
+        # print(f'Vocabulary size of tokenizer: {self.tokenizer.vocab_size}')
         
     def __len__(self):
         return len(self.data) - self.block_size
@@ -65,7 +68,10 @@ class CharDataset(Dataset):
 
 def make_datasets(text: str, tokenizer: CharTokenizer, block_size: int = 128,
                   val_fraction: float = 0.1):
+    logger.info(f'Creating datasets with val_fraction={val_fraction}')
     split = int(len(text) * (1 - val_fraction))
     train_ds = CharDataset(text[:split], tokenizer, block_size)
+    logger.info(f'Training dataset with {len(train_ds):,} characters')
     val_ds = CharDataset(text[split:], tokenizer, block_size)
+    logger.info(f'Validation dataset with {len(val_ds):,} characters')
     return train_ds, val_ds

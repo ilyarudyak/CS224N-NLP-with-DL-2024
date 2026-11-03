@@ -15,7 +15,7 @@ import torch.nn as nn
 from torch.nn import functional as F
 from dataclasses import dataclass
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("mingpt.model_v2")
 
 # class GPTConfig:
 #     """ base GPT config, params common to all GPT versions """
@@ -36,15 +36,18 @@ class GPTConfig:
     vocab_size: int = None
     block_size: int = None
 
-    # Model architecture (used in play_char.ipynb)
-    n_layer: int = 8
-    n_head: int = 8
-    n_embd: int = 512
+    # Model architecture
+    # Number of transformer blocks in the model
+    n_layer: int = 8 # Used in the original play_char.ipynb
+    # Number of attention heads in each transformer block
+    n_head: int = 8 # Used in the original play_char.ipynb
+    # Dimensionality of the embeddings for the input tokens
+    n_embd: int = 512 # Used in the original play_char.ipynb
 
     # Dropout rates
-    embd_pdrop: float = 0.1
-    resid_pdrop: float = 0.1
-    attn_pdrop: float = 0.1
+    embd_pdrop: float = 0.1 # Used in the original model.py
+    resid_pdrop: float = 0.1 # Used in the original model.py
+    attn_pdrop: float = 0.1 # Used in the original model.py
 
 @dataclass
 class GPT1Config(GPTConfig):
