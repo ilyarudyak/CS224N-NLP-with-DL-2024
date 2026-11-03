@@ -7,6 +7,9 @@ data/
 ### Ignore Model and Logs From Colab ###
 downloaded_artifacts/
 
+### Ignore checkpoints
+checkpoints/
+
 ### JupyterNotebooks ###
 # gitignore template for Jupyter Notebooks
 # website: http://jupyter.org/
