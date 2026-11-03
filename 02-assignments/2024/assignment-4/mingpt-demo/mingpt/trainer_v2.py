@@ -129,10 +129,19 @@ class Trainer:
     def _train_epoch(self, optimizer, epoch):
         self.model.train()
         pbar = tqdm(self.train_loader)
+
+        # Check if bf16 should be enabled
+        use_bf16 = getattr(self.config, 'use_bf16', False) and (self.device == 'cuda')
+
         for it, (x, y) in enumerate(pbar):
             x, y = x.to(self.device), y.to(self.device)
 
-            _, loss = self.model(x, y)
+            # _, loss = self.model(x, y)
+
+            # Autocast runs linear/attention layers in bf16, keeps softmax/layernorm in fp32
+            with torch.amp.autocast(device_type=self.device, dtype=torch.bfloat16, enabled=use_bf16):
+                _, loss = self.model(x, y)
+
             self.model.zero_grad()
             loss.backward()
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.config.grad_norm_clip)
@@ -149,8 +158,10 @@ class Trainer:
     def _evaluate(self):
         self.model.eval()
         losses = []
+        use_bf16 = getattr(self.config, 'use_bf16', False) and (self.device == 'cuda')
         for x, y in self.val_loader:
-            _, loss = self.model(x.to(self.device), y.to(self.device))
+            with torch.amp.autocast(device_type=self.device, dtype=torch.bfloat16, enabled=use_bf16):
+                _, loss = self.model(x.to(self.device), y.to(self.device))
             losses.append(loss.item())
         return float(np.mean(losses))
 
