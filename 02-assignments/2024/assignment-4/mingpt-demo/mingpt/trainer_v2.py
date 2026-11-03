@@ -41,6 +41,7 @@ class TrainerConfig:
     ckpt_path = "checkpoints/ckpt.pt"
 
     # (5) GPU Settings
+    pin_memory = True
     num_workers = 0 
     use_bf16 = True
 
