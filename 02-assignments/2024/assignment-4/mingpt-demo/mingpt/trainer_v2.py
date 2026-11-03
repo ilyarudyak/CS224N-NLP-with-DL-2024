@@ -42,7 +42,7 @@ class TrainerConfig:
 
     # (5) GPU Settings
     num_workers = 0 
-    use_bf16 = False
+    use_bf16 = True
 
     def __init__(self, **kwargs):
         for k,v in kwargs.items():
@@ -266,7 +266,7 @@ def train_on_full_dataset_a100(context="O God, O God!"):
 
     # Create trainer config
     trainer_config = TrainerConfigA100(
-        lr_decay=False
+        final_tokens=2 * len(train_ds) * train_ds.block_size
     )
 
     # Create the trainer
