@@ -23,9 +23,9 @@ logger = logging.getLogger("mingpt.trainer_v2")
 class TrainerConfig:
 
     # (1) Main training parameters
-    max_epochs = 2
-    batch_size = 64
-    learning_rate = 3e-4
+    max_epochs = 2 # Used in the original play_char.ipynb
+    batch_size = 64 # Used in the original play_char.ipynb: 512
+    learning_rate = 3e-4 # Used in the original play_char.ipynb
 
     # (2) Optimization parameters
     betas = (0.9, 0.95)
@@ -41,7 +41,6 @@ class TrainerConfig:
     ckpt_path = "checkpoints/ckpt.pt"
 
     # (5) GPU Settings
-    pin_memory = True
     num_workers = 0 
     use_bf16 = False
 
@@ -52,20 +51,23 @@ class TrainerConfig:
 class TrainerConfigA100(TrainerConfig):
 
     # (1) Main training parameters (used in play_char.ipynb)
-    max_epochs = 2
+    max_epochs = 2 # Used in the original play_char.ipynb
     # The run from play_char uses 512; fits easily on a 40/80 GB A100
-    batch_size = 512
+    batch_size = 512 # Used in the original play_char.ipynb
     # The run from play_char uses 6e-4; we need to increase it for larger batch sizes
-    learning_rate = 6e-4
+    learning_rate = 6e-4 # Used in the original play_char.ipynb
 
     # (3) Learning rate decay parameters (used in play_char.ipynb)
-    lr_decay = True
-    warmup_tokens = 512 * 20 * 128
+    lr_decay = True # Used in the original play_char.ipyn
+    # There a bug here: we need to multiply by the sequence length (block_size) as well
+    warmup_tokens = 512 * 20 * 128 # Used in the original play_char.ipynb: 512 * 20
     # We set final_tokens later on since it is not a fixed value
-    # final_tokens=2*len(train_dataset)*block_size
+    # final_tokens=2*len(train_dataset)*block_size # Used in the original play_char.ipynb
 
     # (5) GPU Settings
-    num_workers = 4
+    pin_memory = True
+    num_workers = 4 # Used in the original play_char.ipynb
+    # use_bf16 = False # Not yet implemented
 
 def make_loaders(train_dataset, val_dataset, config):
     train_loader = DataLoader(
@@ -237,7 +239,7 @@ def train_on_full_dataset_a100(context="O God, O God!"):
     tokenizer = CharTokenizer(text)
 
     # Split into train and validation sets
-    train_ds_toy, val_ds_toy = make_datasets(
+    train_ds, val_ds = make_datasets(
         text=text, # Use the FULL dataset for training
         tokenizer=tokenizer,
         )
@@ -245,22 +247,22 @@ def train_on_full_dataset_a100(context="O God, O God!"):
     # Create configuration for the model
     model_config = GPTConfig(
         vocab_size=tokenizer.vocab_size,
-        block_size=train_ds_toy.block_size,
+        block_size=train_ds.block_size,
     )
 
     # Create the model
     model = GPT(model_config)
 
     # Create trainer config
-    trainer_config = TrainerConfig(
+    trainer_config = TrainerConfigA100(
         lr_decay=False
     )
 
     # Create the trainer
     trainer = Trainer(
         model=model,
-        train_dataset=train_ds_toy,
-        val_dataset=val_ds_toy,
+        train_dataset=train_ds,
+        val_dataset=val_ds,
         config=trainer_config
         )
 
