@@ -3,6 +3,8 @@ from torch import nn
 
 import itertools
 
+from dataclasses import dataclass
+
 #############################################################
 # Data
 #############################################################
@@ -17,7 +19,20 @@ corpus = [
          ]
 
 #############################################################
-# Vocabulary and Dataset
+# Config
+#############################################################
+@dataclass
+class WWConfig:
+    window_size: int = 2
+    embed_dim: int = 25
+    hidden_dim: int = 25
+    learning_rate: float = 0.01
+    batch_size: int = 2
+    num_epochs: int = 1000
+    freeze_embeddings: bool = False
+
+#############################################################
+# Data management
 #############################################################
 class WWVocabulary:
     PAD_TOKEN = "<pad>"
@@ -80,3 +95,45 @@ class WWDataset(torch.utils.data.Dataset):
 
     def __getitem__(self, idx):
         return self.data[idx], self.labels[idx]
+
+
+class WWCollator:
+    def __init__(self, vocab: WWVocabulary, config: WWConfig):
+        self.vocab = vocab
+        self.window_size = config.window_size
+        self.pad_token = vocab.PAD_TOKEN
+        self.pad_idx = vocab.pad_idx
+
+    def _pad_window(self, sentence):
+        window = [self.pad_token] * self.window_size
+        return window + sentence + window
+
+    def __call__(self, batch):
+        # Extract sentences and labels from the batch
+        sentences, labels = zip(*batch)
+
+        # 1. Record true sentence lengths BEFORE padding (needed for loss normalization)
+        lengths = torch.tensor([len(lbl) for lbl in labels], dtype=torch.long)
+
+        # 2. Window-pad sentences with <pad>
+        sentences = [self._pad_window(sent) for sent in sentences]
+
+        # 3. Convert tokens to index tensors
+        sentences_encoded = self.vocab.encode_batch(sentences)
+
+        # 4. Pad batch sequences to equal lengths
+        sentences_tensor = [torch.tensor(sent, dtype=torch.long) for sent in sentences_encoded]
+        sentences_padded = torch.nn.utils.rnn.pad_sequence(
+            sentences_tensor, 
+            batch_first=True, 
+            padding_value=self.pad_idx
+        )
+
+        labels_tensor = [torch.tensor(lbl, dtype=torch.float) for lbl in labels]
+        labels_padded = torch.nn.utils.rnn.pad_sequence(
+            labels_tensor, 
+            batch_first=True, 
+            padding_value=0.0
+        )
+
+        return sentences_padded, labels_padded, lengths
