@@ -27,6 +27,9 @@ class WWVocabulary:
 
     def __init__(self, corpus):
 
+        # Store the raw corpus
+        self.corpus = corpus
+
         # Preprocess the corpus
         self.train_tokens = self._tokenize_corpus()
 
@@ -40,7 +43,7 @@ class WWVocabulary:
         return sentence.lower().split()
 
     def _tokenize_corpus(self):
-        return [self._tokenize_sentence(sentence) for sentence in corpus]
+        return [self._tokenize_sentence(sentence) for sentence in self.corpus]
 
     def _build_vocab(self):
 
@@ -80,7 +83,7 @@ class WWDataset(torch.utils.data.Dataset):
     def __init__(self, vocab):
         super(WWDataset, self).__init__()
         self.vocab = vocab
-        
+
         self.labels = self._assign_labels()
         self.data = [(encoded_sentence, labels) 
                      for encoded_sentence, labels in zip(vocab._encode_train_tokens(), self.labels)]
