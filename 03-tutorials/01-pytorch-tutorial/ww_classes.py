@@ -19,84 +19,64 @@ corpus = [
 #############################################################
 # Vocabulary and Dataset
 #############################################################
-
-# Create a vocabulary from the corpus
 class WWVocabulary:
     PAD_TOKEN = "<pad>"
     UNK_TOKEN = "<unk>"
 
-    def __init__(self, corpus):
-
-        # Store the raw corpus
-        self.corpus = corpus
-
-        # Preprocess the corpus
-        self.train_tokens = self._tokenize_corpus()
-
-        # Build the vocabulary from the tokenized sentences
-        self.vocab = set()
-        self.word2idx = {}
-        self.idx2word = {}
-        self._build_vocab()
-
-    def _tokenize_sentence(self, sentence):
-        return sentence.lower().split()
-
-    def _tokenize_corpus(self):
-        return [self._tokenize_sentence(sentence) for sentence in self.corpus]
-
-    def _build_vocab(self):
-
-        # Define special tokens
+    def __init__(self, tokenized_texts):
         special_tokens = [self.PAD_TOKEN, self.UNK_TOKEN]
-
-        # Extract unique words from the training tokens
-        unique_words = set(itertools.chain.from_iterable(self.train_tokens))
-        unique_words = sorted(unique_words)
-
-        # Add special tokens to the vocabulary 
+        unique_words = sorted(
+            set(itertools.chain.from_iterable(tokenized_texts)) - set(special_tokens)
+        )
         self.vocab = special_tokens + unique_words
 
-        # Build mapping dictionaries
-        self.word2idx = {word: idx for idx, word in enumerate(self.vocab)}
-        self.idx2word = {idx: word for idx, word in enumerate(self.vocab)}
-
-        # Store specific indices for quick access
-        self.pad_idx = self.word2idx[self.PAD_TOKEN]  # 0
-        self.unk_idx = self.word2idx[self.UNK_TOKEN]  # 1
-        
+        self.word2idx = {w: i for i, w in enumerate(self.vocab)}
+        self.idx2word = {i: w for i, w in enumerate(self.vocab)}
+        self.pad_idx = self.word2idx[self.PAD_TOKEN]
+        self.unk_idx = self.word2idx[self.UNK_TOKEN]
 
     def __len__(self):
-        return len(self.word2idx)
+        return len(self.vocab)
 
     def word_to_index(self, word):
-        return self.word2idx.get(word.lower(), self.word2idx.get(self.UNK_TOKEN))
+        return self.word2idx.get(word.lower(), self.unk_idx)
 
-    def index_to_word(self, index):
-        return self.idx2word.get(index, self.UNK_TOKEN)
+    def index_to_word(self, idx):
+        return self.idx2word.get(idx, self.UNK_TOKEN)
 
-    def _encode_train_tokens(self):
-        return [[self.word_to_index(word) for word in sentence] for sentence in self.train_tokens]
+    def encode(self, tokens):
+        """Converts a list of word tokens -> list of integer indices."""
+        return [self.word_to_index(token) for token in tokens]
+
+    def decode(self, indices):
+        """Converts a list of integer indices -> list of word tokens."""
+        return [self.index_to_word(idx) for idx in indices]
+
+    def encode_batch(self, batch_of_tokens):
+        """Converts a list of token lists -> list of index lists."""
+        return [self.encode(tokens) for tokens in batch_of_tokens]
 
 
 class WWDataset(torch.utils.data.Dataset):
-    def __init__(self, vocab):
-        super(WWDataset, self).__init__()
-        self.vocab = vocab
+    DEFAULT_LOCATIONS = {"australia", "ankara", "paris", "stanford", "taiwan", "turkey"}
 
-        self.labels = self._assign_labels()
-        self.data = [(encoded_sentence, labels) 
-                     for encoded_sentence, labels in zip(vocab._encode_train_tokens(), self.labels)]
+    def __init__(self, sentences, labels=None, locations=None):
+        """
+        sentences: list of raw string sentences, e.g. ["We always come to Paris", ...]
+        labels: optional explicit labels. If None, generated from `locations`.
+        """
+        # Tokenize sentences
+        self.data = [s.lower().split() for s in sentences]
 
-    def _assign_labels(self, 
-                       locations = set(["australia", "ankara", "paris", 
-                                        "stanford", "taiwan", "turkey"])):
-        train_labels = [[1 if word in locations else 0 for word in sent] 
-                        for sent in self.vocab.train_tokens]
-        return train_labels
+        # Assign labels if not provided
+        if labels is not None:
+            self.labels = labels
+        else:
+            locs = locations if locations is not None else self.DEFAULT_LOCATIONS
+            self.labels = [[1 if w in locs else 0 for w in sent] for sent in self.data]
 
     def __len__(self):
         return len(self.data)
 
     def __getitem__(self, idx):
-        return self.data[idx]
+        return self.data[idx], self.labels[idx]
