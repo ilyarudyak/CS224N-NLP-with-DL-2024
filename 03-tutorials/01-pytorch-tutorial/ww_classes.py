@@ -363,7 +363,7 @@ class WWClassifierMulti(nn.Module):
     self.num_classes = num_classes
     self.loss_type = loss_type
 
-    self.embeds = nn.Embedding(len(vocab), self.embed_dim, padding_idx=self.vocab.pad_idx)
+    self.embeds = nn.Embedding(len(vocab), self.embed_dim, padding_idx=self.vocab.token_pad_idx)
     if self.freeze_embeddings:
         self.embeds.weight.requires_grad = False
 
@@ -481,33 +481,69 @@ class TrainerBin:
     #     return loss
 
     def _loss_function(self, batch_outputs, batch_labels, batch_lengths):
-        # One loss value per token position.
-        per_token_loss = self.loss_fn(batch_outputs, batch_labels.float())
 
-        positions = torch.arange(batch_outputs.size(1), device=batch_outputs.device)
-        lengths = batch_lengths.to(batch_outputs.device)
-        mask = positions.unsqueeze(0) < lengths.unsqueeze(1)
+        """
+        Compute the masked loss for a batch of sequences, ignoring padding tokens.
+
+        Args:
+            batch_outputs (torch.Tensor): Model outputs of shape [batch_size, seq_len].
+            batch_labels (torch.Tensor): Ground truth labels of shape [batch_size, seq_len].
+            batch_lengths (torch.Tensor): Lengths of each sequence in the batch of shape [batch_size].
+
+        Returns:
+            torch.Tensor: The computed masked loss for the batch.
+        """
+
+        # batch_outputs: [batch_size, seq_len]
+        # batch_labels: [batch_size, seq_len]
+        # batch_lengths: [batch_size]
+
+        # One loss value per token position.
+        per_token_loss = self.loss_fn(batch_outputs, batch_labels.float()) # [batch_size, seq_len]
+
+        # ---Masking to ignore padding tokens in the loss calculation---
+
+        # Create range [0, 1, 2, ..., seq_len-1] for masking purposes
+        positions = torch.arange(batch_outputs.size(1), device=batch_outputs.device) # [seq_len]
+        positions = positions.unsqueeze(0) # [1, seq_len]
+
+        # Move batch_lengths to the same device as batch_outputs for masking purposes
+        lengths = batch_lengths.to(batch_outputs.device) # [batch_size]
+        lengths = lengths.unsqueeze(1) # [batch_size, 1]
+
+        # Create a mask where positions less than the sequence lengths are True 
+        # and other positions (padding) are False
+        mask = positions < lengths # [batch_size, seq_len]
 
         if not mask.any():
             raise ValueError("Cannot compute loss for a batch with no valid tokens")
+
+        # ---Masking to ignore padding tokens in the loss calculation---
 
         return (per_token_loss * mask).sum() / mask.sum()
 
     def _train_epoch(self):
 
-        # Keep track of the total loss for the batch
+        # Keep track of the total loss for the epoch
         total_loss = 0
         for batch_inputs, batch_labels, batch_lengths in self.loader:
-            # Clear the gradients
+
+            # (1) Clear the gradients
             self.optimizer.zero_grad()
-            # Run a forward pass
-            outputs = self.model.forward(batch_inputs)
-            # Compute the batch loss
-            loss = self._loss_function(outputs, batch_labels, batch_lengths)
-            # Calculate the gradients
+
+            # (2) Run a forward pass
+            outputs = self.model.forward(batch_inputs) # [batch_size, seq_len]
+
+            # (3) Compute the batch loss
+            loss = self._loss_function(outputs, batch_labels, batch_lengths) # [batch_size]
+
+            # (4) Calculate the gradients
             loss.backward()
-            # Update the parameteres
+
+            # (5) Update the parameteres
             self.optimizer.step()
+
+            # (6) Accumulate the total loss for the epoch
             total_loss += loss.item()
 
         return total_loss
@@ -515,8 +551,113 @@ class TrainerBin:
     # Function containing our main training loop
     def train(self):
 
+        # Extract the number of epochs from the configuration
         num_epochs = self.config.num_epochs
+
         # Iterate through each epoch and call our train_epoch function
         for epoch in range(num_epochs):
             epoch_loss = self._train_epoch()
-            if epoch % 100 == 0: print(f"Epoch {epoch}, Loss: {epoch_loss:.4f}")
+            if epoch % 100 == 0: 
+                print(f"Epoch {epoch}, Loss: {epoch_loss:.4f}")
+
+
+class TrainerMulti:
+
+    def __init__(self, config, corpus, dataset, vocab, loss_type='cross_entropy'):
+
+        # Store the configuration and data for the trainer
+        self.config = config
+        self.corpus = corpus
+        self.dataset = dataset
+        self.vocab = vocab
+
+        # Initialize the model and optimizer
+        self.model = WWClassifierMulti(config, vocab=vocab, loss_type=loss_type)
+        self.optimizer = torch.optim.SGD(self.model.parameters(), lr=config.learning_rate)
+
+        # Initialize the loss function based on the specified loss type
+        if loss_type == 'cross_entropy':
+            self.loss_fn = torch.nn.CrossEntropyLoss(ignore_index=-100)
+        elif loss_type == 'nll_loss':
+            self.loss_fn = torch.nn.NLLLoss(ignore_index=-100)
+        else:   
+            raise ValueError(f"Unsupported loss type: {loss_type}")
+
+        # Initialize the data loader for the training dataset
+        self.loader = get_data_loader(corpus, dataset, config, vocab, model_type='multi')
+
+    def _loss_function(self, batch_outputs, batch_labels, batch_lengths):
+        if not (batch_labels != -100).any():
+            raise ValueError("Cannot compute loss for a batch with no valid tokens")
+
+        return self.loss_fn(batch_outputs, batch_labels)
+
+    def _train_epoch(self):
+
+        # Keep track of the total loss for the epoch
+        total_loss = 0
+        for batch_inputs, batch_labels, batch_lengths in self.loader:
+
+            # (1) Clear the gradients
+            self.optimizer.zero_grad()
+
+            # (2) Run a forward pass
+            outputs = self.model.forward(batch_inputs) # [batch_size, seq_len]
+
+            # (3) Compute the batch loss
+            loss = self._loss_function(outputs, batch_labels, batch_lengths) # [batch_size]
+
+            # (4) Calculate the gradients
+            loss.backward()
+
+            # (5) Update the parameteres
+            self.optimizer.step()
+
+            # (6) Accumulate the total loss for the epoch
+            total_loss += loss.item()
+
+        return total_loss
+
+    # Function containing our main training loop
+    def train(self):
+
+        # Extract the number of epochs from the configuration
+        num_epochs = self.config.num_epochs
+
+        # Iterate through each epoch and call our train_epoch function
+        for epoch in range(num_epochs):
+            epoch_loss = self._train_epoch()
+            if epoch % 100 == 0: 
+                print(f"Epoch {epoch}, Loss: {epoch_loss:.4f}")
+
+    def predict(self, sentences):
+        test_dataset = WWDataset(sentences)
+        test_loader = get_data_loader(
+            sentences,
+            test_dataset,
+            self.config,
+            self.vocab,
+            shuffle=False,
+            model_type='multi',
+        )
+
+        predictions = []
+        was_training = self.model.training
+        self.model.eval()
+
+        try:
+            with torch.no_grad():
+                for batch_inputs, _, lengths in test_loader:
+                    device = next(self.model.parameters()).device
+                    outputs = self.model(batch_inputs.to(device)) # [batch_size, num_classes, seq_len]
+                    print(f"Outputs shape: {outputs.shape}")
+                    print(f"Outputs:\n{outputs}")
+                    predicted_classes = outputs.argmax(dim=1)  # [batch_size, seq_len]
+
+                    for row, length in zip(predicted_classes, lengths.tolist()):
+                        predictions.append(row[:length].cpu().tolist())
+        finally:
+            self.model.train(was_training)
+
+        return predictions
+        
