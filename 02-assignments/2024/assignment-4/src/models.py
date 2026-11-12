@@ -88,7 +88,7 @@ class GPT(nn.Module):
         self.block_size = config.block_size
         self.apply(self._init_weights)
 
-        print(f"number of parameters: {sum(p.numel() for p in self.parameters())}")
+        print(f"Number of parameters: {sum(p.numel() for p in self.parameters())/1e6:,.2f}M")
 
     def _init_weights(self, module):
         if isinstance(module, (nn.Linear, nn.Embedding)):

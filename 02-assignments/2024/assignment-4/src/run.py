@@ -32,6 +32,7 @@ if torch.cuda.is_available():
     device = torch.cuda.current_device()
 elif torch.backends.mps.is_available() and args.variant == 'vanilla':
     device = 'mps'
+print(f'Device: {device}')
 
 # TensorBoard training log
 writer = SummaryWriter(log_dir='expt/%s/%s_%s_pt_lr_%f_ft_lr_%f' % (
@@ -66,7 +67,7 @@ model = None
 if args.variant == 'vanilla':
     # TODO: [part c] Make some model here
     ### YOUR CODE HERE ###
-    pass
+    model = models.GPT(mconf).to(device)
     ### END YOUR CODE ###
 elif args.variant == 'rope':
     # TODO: [part g] Make some other model here
@@ -141,13 +142,56 @@ elif args.function == 'finetune':
     #     number of epochs for each case.
 
     ### YOUR CODE HERE ###
-    pass
+    print(f'Finetuning with writing params path: {args.writing_params_path}')
+
+    # Create a training dataset object
+    with open(args.finetune_corpus_path, encoding='utf-8') as f:
+        birth_places_train = f.read()
+    train_dataset = dataset.NameDataset(
+        pretraining_dataset=pretrain_dataset,
+        data=birth_places_train)
+
+    if args.eval_corpus_path is not None:
+        with open(args.eval_corpus_path, encoding='utf-8') as f:
+            birth_places_eval = f.read()
+        test_dataset = dataset.NameDataset(
+            pretraining_dataset=pretrain_dataset,
+            data=birth_places_eval)
+    else:
+        test_dataset = None
+
+    # Create a trainer configuration object
+    tconfig = trainer.TrainerConfig(
+            max_epochs=75,
+            batch_size=256,
+            learning_rate=args.finetune_lr,
+            lr_decay=True,
+            warmup_tokens=512*20*block_size,
+            final_tokens=200*len(pretrain_dataset)*block_size,
+            num_workers=4,
+            writer=writer,
+            ckpt_path=args.writing_params_path
+    )
+
+    # Create a trainer object with the model, training dataset, and configuration
+    t = trainer.Trainer(
+        model=model, 
+        train_dataset=train_dataset, 
+        test_dataset=test_dataset, 
+        config=tconfig)
+
+    # Start the finetuning process
+    t.train()
+
+    # Save the finetuned model parameters
+    t.save_checkpoint()
+
     ### END YOUR CODE ###
 elif args.function == 'evaluate':
     assert args.outputs_path is not None
     assert args.reading_params_path is not None
     assert args.eval_corpus_path is not None
-    model.load_state_dict(torch.load(args.reading_params_path))
+    model.load_state_dict(torch.load(args.reading_params_path, map_location=device))
     correct = 0
     total = 0
     with open(args.outputs_path, 'w', encoding='utf-8') as fout:
