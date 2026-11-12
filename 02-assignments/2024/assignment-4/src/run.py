@@ -168,7 +168,7 @@ elif args.function == 'finetune':
             lr_decay=True,
             warmup_tokens=512*20,
             final_tokens=200*len(pretrain_dataset)*block_size,
-            num_workers=4,
+            num_workers=4 if torch.cuda.is_available() else 0,
             writer=writer,
             ckpt_path=args.writing_params_path
     )

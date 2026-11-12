@@ -134,12 +134,12 @@ class NameDataset(Dataset):
         self.stoi = pretraining_dataset.stoi
 
         self.block_size = pretraining_dataset.block_size
-        print(f'block_size: {self.block_size}')
+        # print(f'block_size: {self.block_size}')
 
         # Convert the input data to a list of strings, ignoring non-ASCII characters.
         # ['Where was Khatchig Mouradian born?\tLebanon', 'Where was Jacob Henry Studer born?\tColumbus', ...]
         self.data: list[str] = list(data.encode('utf-8').decode('ascii', errors='ignore').split('\n'))
-        print(f'self.data {self.data[:5]}')
+        # print(f'self.data {self.data[:5]}')
 
     def __len__(self):
         return len(self.data) - 1
@@ -159,29 +159,29 @@ class NameDataset(Dataset):
         #   - '?' is the original question mark in the input;
         #   - '⁇' is the MASK_CHAR used to separate input and output.
         x = inp + self.MASK_CHAR + oup + self.MASK_CHAR
-        print(f'x before padding:\n{x}')
-        print(f'length of x before padding: {len(x)}')
+        # print(f'x before padding:\n{x}')
+        # print(f'length of x before padding: {len(x)}')
 
         # Pad the input sequence x to the block size with the PAD_CHAR.
         # This ensures that the input sequence has a fixed length equal to the block size.
         # x = 'Where was Khatchig Mouradian born?⁇Lebanon⁇□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□'
         # The length of x after padding should be equal to the block size (128).
         x = x + self.PAD_CHAR*(self.block_size - len(x))
-        print(f'x after padding:\n{x}')
-        print(f'length of x after padding: {len(x)}')   
+        # print(f'x after padding:\n{x}')
+        # print(f'length of x after padding: {len(x)}')   
 
         # Construct the target sequence y.
         # The target sequence y is the same as the input sequence x, but with the input part replaced by PAD_CHARs.
         # y = '□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□⁇Lebanon⁇'□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□
         # The length of y after padding should also be equal to the block size - 1 (127).
         y = self.PAD_CHAR*(len(inp)-1) + x[len(inp):]
-        print(f'y after padding:\n{y}')
-        print(f'length of y after padding: {len(y)}')
+        # print(f'y after padding:\n{y}')
+        # print(f'length of y after padding: {len(y)}')
 
         # Remove the last character from x to match the target sequence length.
         x = x[:-1]
-        print(f'x after removing last char:\n{x}')
-        print(f'length of x after removing last char: {len(x)}')
+        # print(f'x after removing last char:\n{x}')
+        # print(f'length of x after removing last char: {len(x)}')
 
         # Convert the input and target sequences to tensors of token indices.
         x = torch.tensor([self.stoi[c] for c in x], dtype=torch.long)
