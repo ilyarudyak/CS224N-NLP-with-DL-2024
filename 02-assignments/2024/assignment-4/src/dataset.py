@@ -1,5 +1,6 @@
 import argparse
 import random
+from typing import Tuple
 
 import torch
 from torch.utils.data import Dataset
@@ -32,9 +33,9 @@ from torch.utils.data import Dataset
 # to int(self.block_size*7/8) has a chance of being picked) for full credit.
 
 # 2. Now, break the (truncated) document into three substrings:
-#
+
 #     [prefix] [masked_content] [suffix]
-#
+
 #   In other words, choose three strings prefix, masked_content and suffix
 #     such that prefix + masked_content + suffix = [the truncated document].
 #   The length of [masked_content] should be random, and 1/4 the length of the
@@ -45,9 +46,9 @@ from torch.utils.data import Dataset
 # less than 1/4 the length of the truncated document) for full credit.
 
 # 3. Rearrange these substrings into the following form:
-#
+
 #     [prefix] MASK_CHAR [suffix] MASK_CHAR [masked_content] [pads]
-#
+
 #   This resulting string, denoted masked_string, serves as the output example.
 #   Here MASK_CHAR is the masking character and [pads] is a string of repeated
 #     PAD_CHAR characters chosen so that the entire string is of length
@@ -75,11 +76,12 @@ from torch.utils.data import Dataset
 #   y: ohn Stephen. Born in Glasgow, Steph⁇lder's apprentice on⁇en became a we⁇□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□
 
 class CharCorruptionDataset(Dataset):
-    def __init__(self, data, block_size):
+    def __init__(self, data: str, block_size: int = 128):
         self.MASK_CHAR = "\u2047" # the doublequestionmark character, for mask
         self.PAD_CHAR = "\u25A1" # the empty square character, for pad
 
         chars = list(sorted(list(set(data))))
+        print(f'Unique characters in data: {len(chars)}')
         assert self.MASK_CHAR not in chars
         assert self.PAD_CHAR not in chars
         chars.insert(0, self.MASK_CHAR)
@@ -89,11 +91,20 @@ class CharCorruptionDataset(Dataset):
         self.itos = {i:ch for i,ch in enumerate(chars)}
 
         data_size, vocab_size = len(data), len(chars)
-        # print(f'data has {data_size} characters, {vocab_size} unique.')
+        print(f'data has {data_size:,} characters, {vocab_size} unique.')
 
         self.block_size = block_size
         self.vocab_size = vocab_size
+
+        # Split the data into list of sentences by newline character
+        # ['Khatchig Mouradian. Khatchig Mouradian is a journalist, writer and translator born in Lebanon .', 
+        # 'Jacob Henry Studer. Jacob Henry Studer (26 February 1840 Columbus, Ohio - 2 August 1904 ...,
         self.data = data.split('\n')
+        print(f'Number of lines in data: {len(self.data):,}')
+        # Print the first few lines of the data for inspection
+        print(f'First few lines of data: {self.data[:5]}')
+        # Check if the last line is empty 
+        print(f'Last line: {self.data[-1]}')
 
     def __len__(self):
         return len(self.data)
@@ -101,8 +112,106 @@ class CharCorruptionDataset(Dataset):
     def __getitem__(self, idx):
         # TODO [part e]: see spec above
         ### YOUR CODE HERE ###
-        pass
+
+        # Step 0. Retrieve the document at the given index from self.data
+        document = self.data[idx]
+        # print(f'Document at index {idx}: {document}')
+
+        # Step 1. Truncate the document randomly
+        document = self._truncate_document(document)
+        # print(f'Truncated document: {document}')
+
+        # Step 2. Break the truncated document into prefix, masked_content, and suffix
+        prefix, masked_content, suffix = self._break_document(document)
+        # print(f'[{prefix}] [{masked_content}] [{suffix}]')
+
+        # Step 3. Rearrange the document into the masked string format
+        masked_string = self._rearrange_document(prefix, masked_content, suffix)
+        # print(f'Rearranged document: {masked_string}')
+
+        # Step 4. Convert the masked string into input and target tensors
+        x, y = self._prepare_pair(masked_string)
         ### END YOUR CODE ###
+        return x, y
+
+    def _truncate_document(self, document: str) -> str:
+        """
+        Randomly truncate the document to a length no less than 4 characters,
+        and no more than `int(self.block_size*7/8)` characters.
+
+        - IMPORTANT: You are free to decide how to perform this random truncation, but
+        make sure that the length is picked _randomly_ (every possible length from 4
+        to `int(self.block_size*7/8)` has a chance of being picked) for full credit.
+        """
+        max_length = min(int(self.block_size * 7 / 8), len(document))
+        if len(document) < 4:
+            # Handle rare cases where document is shorter than 4 chars
+            trunc_length = len(document)
+        else:
+            trunc_length = random.randint(4, max_length)
+        return document[:trunc_length]
+
+    def _break_document(self, document: str) -> list[str]:
+        """
+        Now, break the (truncated) document into three substrings:
+
+            [prefix] [masked_content] [suffix]
+
+        In other words, choose three strings prefix, masked_content and suffix
+            such that prefix + masked_content + suffix = [the truncated document].
+        The length of [masked_content] should be random, and 1/4 the length of the
+            truncated document on average.
+
+        - IMPORTANT: You are free to decide how to perform this operation, but
+        make sure that the length is picked _randomly_ (has a chance of being more or
+        less than 1/4 the length of the truncated document) for full credit.
+        """
+
+        # masked_length = max(1, int(len(document) / 4))
+        # average length is L / 4, with random variation
+        avg_len = len(document) / 4.0
+        # e.g., uniform between max(1, int(avg_len * 0.5)) and int(avg_len * 1.5) or similar:
+        masked_length = random.randint(max(1, int(avg_len * 0.5)), max(1, int(avg_len * 1.5)))
+
+
+        start = random.randint(0, len(document) - masked_length)
+        prefix = document[:start]
+        masked_content = document[start:start + masked_length]
+        suffix = document[start + masked_length:]
+        return prefix, masked_content, suffix
+
+    def _rearrange_document(self, prefix: str, masked_content: str, suffix: str) -> str:
+        """
+        Rearrange these substrings into the following form:
+
+            [prefix] MASK_CHAR [suffix] MASK_CHAR [masked_content] [pads]
+
+        This resulting string, denoted masked_string, serves as the output example.
+        Here MASK_CHAR is the masking character and [pads] is a string of repeated
+            PAD_CHAR characters chosen so that the entire string is of length
+            self.block_size + 1.
+        Intuitively, the string [masked_content] is removed from the document and
+            replaced with MASK_CHAR. After the suffix of the string, MASK_CHAR is seen
+            again, followed by the removed content, and the padding characters.
+        """
+        masked_string = prefix + self.MASK_CHAR + suffix + self.MASK_CHAR + masked_content
+        pads = self.PAD_CHAR * (self.block_size + 1 - len(masked_string))
+        return masked_string + pads
+
+    def _prepare_pair(self, masked_string: str) -> Tuple[str, str]:
+
+        """
+        We now use masked_string to construct the input and output example pair. To
+        do so, simply take the input string to be masked_string[:-1], and the output
+        string to be masked_string[1:]. In other words, for each character, the goal
+        is to predict the next character in the masked string.
+
+        Making use of the vocabulary that you defined, encode the resulting input
+        and output strings as Long tensors and return the resulting data point.
+        """
+        x = torch.tensor([self.stoi[c] for c in masked_string[:-1]], dtype=torch.long)
+        y = torch.tensor([self.stoi[c] for c in masked_string[1:]], dtype=torch.long)
+        return x, y
 
 
 # The input-output pairs (x, y) of the NameDataset are of the following form:
