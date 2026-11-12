@@ -6,13 +6,20 @@
 
 import argparse
 import utils
+import tqdm
 
 def main():
     accuracy = 0.0
 
     # Compute accuracy in the range [0.0, 100.0]
     ### YOUR CODE HERE ###
-    pass
+    filepath = "birth_dev.tsv"
+    with open(filepath, encoding='utf-8') as fin:
+        num_lines = len([line for line in fin if line.strip()])
+
+    predictions = ["London"] * num_lines
+    total, correct = utils.evaluate_places(filepath, predictions)
+    accuracy = (correct / total) * 100.0
     ### END YOUR CODE ###
 
     return accuracy
