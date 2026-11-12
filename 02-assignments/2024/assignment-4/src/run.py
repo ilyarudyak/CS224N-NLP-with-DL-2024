@@ -166,7 +166,7 @@ elif args.function == 'finetune':
             batch_size=256,
             learning_rate=args.finetune_lr,
             lr_decay=True,
-            warmup_tokens=512*20*block_size,
+            warmup_tokens=512*20,
             final_tokens=200*len(pretrain_dataset)*block_size,
             num_workers=4,
             writer=writer,
