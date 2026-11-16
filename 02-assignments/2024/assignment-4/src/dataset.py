@@ -100,11 +100,11 @@ class CharCorruptionDataset(Dataset):
         # ['Khatchig Mouradian. Khatchig Mouradian is a journalist, writer and translator born in Lebanon .', 
         # 'Jacob Henry Studer. Jacob Henry Studer (26 February 1840 Columbus, Ohio - 2 August 1904 ...,
         self.data = data.split('\n')
-        print(f'Number of lines in data: {len(self.data):,}')
+        # print(f'Number of lines in data: {len(self.data):,}')
         # Print the first few lines of the data for inspection
-        print(f'First few lines of data: {self.data[:5]}')
+        # print(f'First few lines of data: {self.data[:5]}')
         # Check if the last line is empty 
-        print(f'Last line: {self.data[-1]}')
+        # print(f'Last line: {self.data[-1]}')
 
     def __len__(self):
         return len(self.data)

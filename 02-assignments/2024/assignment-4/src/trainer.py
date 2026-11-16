@@ -8,6 +8,7 @@ import logging
 
 from tqdm import tqdm
 import numpy as np
+from pathlib import Path
 
 import torch
 import torch.optim as optim
@@ -29,7 +30,7 @@ class TrainerConfig:
     warmup_tokens = 375e6 # these two numbers come from the GPT-3 paper, but may not be good defaults elsewhere
     final_tokens = 260e9 # (at what point we reach 10% of original LR)
     # checkpoint settings
-    ckpt_path = None
+    ckpt_path = 'checkpoints/model.pt'
     num_workers = 0 # for DataLoader
     writer = None
     
@@ -56,8 +57,14 @@ class Trainer:
 
     def save_checkpoint(self):
         if self.config.ckpt_path is not None:
+
+            # Create the checkpoint directory if it doesn't exist
+            Path(self.config.ckpt_path).parent.mkdir(parents=True, exist_ok=True)
+            
             ckpt_model = self.model.module if hasattr(self.model, "module") else self.model
             logger.info("saving %s", self.config.ckpt_path)
+
+            # Save the model state dictionary to the checkpoint path
             torch.save(ckpt_model.state_dict(), self.config.ckpt_path)
 
     def train(self):

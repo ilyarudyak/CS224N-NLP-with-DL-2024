@@ -25,6 +25,7 @@ argp.add_argument('--pretrain_lr', default=6e-3, type=float)
 argp.add_argument('--finetune_lr', default=6e-4, type=float)
 argp.add_argument('--tb_expt_name', help='debug string for tb log.',
                   default='run')
+argp.add_argument('--toy_run', action='store_true', help='Run for 1 epoch only')
 args = argp.parse_args()
 
 device = 'cpu'
@@ -103,7 +104,40 @@ if args.function == 'pretrain':
     # writer=writer
 
     ### YOUR CODE HERE ###
-    pass
+    print(f'Pretraining with writing params path: {args.writing_params_path}')
+
+    # Creating a pretraining dataset object
+    with open(args.pretrain_corpus_path, encoding='utf-8') as f:
+        birth_places_pretrain = f.read()
+    pretrain_dataset = dataset.CharCorruptionDataset(
+        data=birth_places_pretrain)
+
+    # Create a trainer configuration object
+    tconfig = trainer.TrainerConfig(
+            max_epochs=650 if not args.toy_run else 1,
+            batch_size=128,
+            learning_rate=args.pretrain_lr,
+            lr_decay=True,
+            warmup_tokens=512*20,
+            final_tokens=650*len(pretrain_dataset)*block_size,
+            num_workers=4 if torch.cuda.is_available() else 0,
+            writer=writer,
+            ckpt_path=args.writing_params_path
+    )
+
+    # Create a trainer object with the model, training dataset, and configuration
+    t = trainer.Trainer(
+        model=model, 
+        train_dataset=pretrain_dataset, 
+        test_dataset=None, 
+        config=tconfig)
+
+    # Start the finetuning process
+    t.train()
+
+    # Save the finetuned model parameters
+    t.save_checkpoint()
+    
     ### END YOUR CODE ###
 elif args.function == 'finetune':
     assert args.writing_params_path is not None
@@ -160,9 +194,17 @@ elif args.function == 'finetune':
     else:
         test_dataset = None
 
+    # Determine the number of epochs based on the run type and whether a pretrained model is used
+    if args.toy_run:
+        epochs = 1
+    elif args.reading_params_path is not None:
+        epochs = 10
+    else:
+        epochs = 75
+
     # Create a trainer configuration object
     tconfig = trainer.TrainerConfig(
-            max_epochs=75,
+            max_epochs=epochs,
             batch_size=256,
             learning_rate=args.finetune_lr,
             lr_decay=True,
@@ -172,6 +214,10 @@ elif args.function == 'finetune':
             writer=writer,
             ckpt_path=args.writing_params_path
     )
+
+    # Load model parameters if a pretrained model is specified
+    if args.reading_params_path is not None:
+        model.load_state_dict(torch.load(args.reading_params_path, map_location=device))
 
     # Create a trainer object with the model, training dataset, and configuration
     t = trainer.Trainer(
