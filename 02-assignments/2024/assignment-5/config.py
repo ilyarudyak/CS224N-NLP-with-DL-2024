@@ -6,6 +6,19 @@ import torch
 from utils import CONFIG_NAME, hf_bucket_url, cached_path, is_remote_url
 
 class PretrainedConfig(object):
+
+  """
+  This is standard base class adapted from Hugging Face:
+
+  Defines properties and methods common to *all* transformer models (BERT, GPT, RoBERTa, T5, etc.).
+  - Handles universal serialization/deserialization logic: 
+    `from_pretrained`, `from_json_file`, `to_dict`, and `save_pretrained`.
+  - Holds general attributes common to all architectures 
+    (e.g., label mappings `id2label`, output toggles like `output_attentions`). 
+  """
+  
+
+
   model_type: str = ""
   is_composition: bool = False
 
@@ -96,13 +109,13 @@ class PretrainedConfig(object):
     config_dict, kwargs = cls.get_config_dict(pretrained_model_name_or_path, **kwargs)
     return cls.from_dict(config_dict, **kwargs)
 
-  @classmethod
+  @classmethod # used by get_config_dict()
   def _dict_from_json_file(cls, json_file: Union[str, os.PathLike]):
     with open(json_file, "r", encoding="utf-8") as reader:
       text = reader.read()
     return json.loads(text)
 
-  @classmethod
+  @classmethod # used by from_pretrained()
   def from_dict(cls, config_dict: Dict[str, Any], **kwargs) -> "PretrainedConfig":
     return_unused_kwargs = kwargs.pop("return_unused_kwargs", False)
 
@@ -125,7 +138,7 @@ class PretrainedConfig(object):
     else:
       return config
 
-  @classmethod
+  @classmethod # used by from_pretrained()
   def get_config_dict(
     cls, pretrained_model_name_or_path: Union[str, os.PathLike], **kwargs
   ) -> Tuple[Dict[str, Any], Dict[str, Any]]:

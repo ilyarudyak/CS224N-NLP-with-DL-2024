@@ -16,6 +16,9 @@ import torch
 import torch.nn as nn
 from torch import Tensor
 import fnmatch
+import shutil
+import tarfile
+from zipfile import ZipFile, is_zipfile
 
 __version__ = "4.0.0"
 _torch_version = importlib_metadata.version("torch")
@@ -42,52 +45,29 @@ def is_torch_available():
 def is_tf_available():
   return False
 
+#################################################################
+# Download files from Hgging Face and manage caching
+#################################################################
 
-def is_remote_url(url_or_filename):
-  parsed = urlparse(url_or_filename)
-  return parsed.scheme in ("http", "https")
-
-
-def http_get(url: str, temp_file: BinaryIO, proxies=None, resume_size=0, headers: Optional[Dict[str, str]] = None):
-  headers = copy.deepcopy(headers)
-  if resume_size > 0:
-    headers["Range"] = "bytes=%d-" % (resume_size,)
-  r = requests.get(url, stream=True, proxies=proxies, headers=headers)
-  r.raise_for_status()
-  content_length = r.headers.get("Content-Length")
-  total = resume_size + int(content_length) if content_length is not None else None
-  progress = tqdm(
-    unit="B",
-    unit_scale=True,
-    total=total,
-    initial=resume_size,
-    desc="Downloading",
-    disable=False,
-  )
-  for chunk in r.iter_content(chunk_size=1024):
-    if chunk:  # filter out keep-alive new chunks
-      progress.update(len(chunk))
-      temp_file.write(chunk)
-  progress.close()
-
-
-def url_to_filename(url: str, etag: Optional[str] = None) -> str:
-  url_bytes = url.encode("utf-8")
-  filename = sha256(url_bytes).hexdigest()
-
-  if etag:
-    etag_bytes = etag.encode("utf-8")
-    filename += "." + sha256(etag_bytes).hexdigest()
-
-  if url.endswith(".h5"):
-    filename += ".h5"
-
-  return filename
-
-
+# Step 1. Build the full URL to a file in the Hugging Face model repository.
 def hf_bucket_url(
   model_id: str, filename: str, subfolder: Optional[str] = None, revision: Optional[str] = None, mirror=None
 ) -> str:
+  """
+  Build the full URL to a file in the Hugging Face model repository.
+
+  Example:
+  ```python
+  config_url = hf_bucket_url("bert-base-uncased", filename=CONFIG_NAME)
+  weights_url = hf_bucket_url("bert-base-uncased", filename=WEIGHTS_NAME)
+  # Returns:
+  # ('https://huggingface.co/bert-base-uncased/resolve/main/config.json',
+  #  'https://huggingface.co/bert-base-uncased/resolve/main/pytorch_model.bin')
+  ```
+
+  """
+
+  
   if subfolder is not None:
     filename = f"{subfolder}/{filename}"
 
@@ -102,21 +82,90 @@ def hf_bucket_url(
   if revision is None:
     revision = "main"
   return HUGGINGFACE_CO_PREFIX.format(model_id=model_id, revision=revision, filename=filename)
+# Step 1. END
 
+# Step 2. Dispatcher: routes URL to cache system
+def cached_path(
+  url_or_filename,
+  cache_dir=None,
+  force_download=False,
+  proxies=None,
+  resume_download=False,
+  user_agent: Union[Dict, str, None] = None,
+  extract_compressed_file=False,
+  force_extract=False,
+  use_auth_token: Union[bool, str, None] = None,
+  local_files_only=False,
+) -> Optional[str]:
+  if cache_dir is None:
+    cache_dir = TRANSFORMERS_CACHE
+  if isinstance(url_or_filename, Path):
+    url_or_filename = str(url_or_filename)
+  if isinstance(cache_dir, Path):
+    cache_dir = str(cache_dir)
 
-def http_user_agent(user_agent: Union[Dict, str, None] = None) -> str:
-  ua = "transformers/{}; python/{}".format(__version__, sys.version.split()[0])
-  if is_torch_available():
-    ua += f"; torch/{_torch_version}"
-  if is_tf_available():
-    ua += f"; tensorflow/{_tf_version}"
-  if isinstance(user_agent, dict):
-    ua += "; " + "; ".join("{}/{}".format(k, v) for k, v in user_agent.items())
-  elif isinstance(user_agent, str):
-    ua += "; " + user_agent
-  return ua
+  if is_remote_url(url_or_filename):
+    # URL, so get it from the cache (downloading if necessary)
+    output_path = get_from_cache(
+      url_or_filename,
+      cache_dir=cache_dir,
+      force_download=force_download,
+      proxies=proxies,
+      resume_download=resume_download,
+      user_agent=user_agent,
+      use_auth_token=use_auth_token,
+      local_files_only=local_files_only,
+    )
+  elif os.path.exists(url_or_filename):
+    # File, and it exists.
+    output_path = url_or_filename
+  elif urlparse(url_or_filename).scheme == "":
+    # File, but it doesn't exist.
+    raise EnvironmentError("file {} not found".format(url_or_filename))
+  else:
+    # Something unknown
+    raise ValueError("unable to parse {} as a URL or as a local path".format(url_or_filename))
 
+  if extract_compressed_file:
+    if not is_zipfile(output_path) and not tarfile.is_tarfile(output_path):
+      return output_path
 
+    # Path where we extract compressed archives
+    # We avoid '.' in dir name and add "-extracted" at the end: "./model.zip" => "./model-zip-extracted/"
+    output_dir, output_file = os.path.split(output_path)
+    output_extract_dir_name = output_file.replace(".", "-") + "-extracted"
+    output_path_extracted = os.path.join(output_dir, output_extract_dir_name)
+
+    if os.path.isdir(output_path_extracted) and os.listdir(output_path_extracted) and not force_extract:
+      return output_path_extracted
+
+    # Prevent parallel extractions
+    lock_path = output_path + ".lock"
+    with FileLock(lock_path):
+      shutil.rmtree(output_path_extracted, ignore_errors=True)
+      os.makedirs(output_path_extracted)
+      if is_zipfile(output_path):
+        with ZipFile(output_path, "r") as zip_file:
+          zip_file.extractall(output_path_extracted)
+          zip_file.close()
+      elif tarfile.is_tarfile(output_path):
+        tar_file = tarfile.open(output_path)
+        tar_file.extractall(output_path_extracted)
+        tar_file.close()
+      else:
+        raise EnvironmentError("Archive format of {} could not be identified".format(output_path))
+
+    return output_path_extracted
+
+  return output_path
+# Step 2. END
+
+# used in cached_path()
+def is_remote_url(url_or_filename):
+  parsed = urlparse(url_or_filename)
+  return parsed.scheme in ("http", "https")
+
+# Step 3. Cache Manager & Download Orchestrator (used in cached_path())
 def get_from_cache(
   url: str,
   cache_dir=None,
@@ -245,84 +294,88 @@ def get_from_cache(
       json.dump(meta, meta_file)
 
   return cache_path
+# Step 3. END.
+
+# Used in get_from_cache()
+def http_user_agent(user_agent: Union[Dict, str, None] = None) -> str:
+  ua = "transformers/{}; python/{}".format(__version__, sys.version.split()[0])
+  if is_torch_available():
+    ua += f"; torch/{_torch_version}"
+  if is_tf_available():
+    ua += f"; tensorflow/{_tf_version}"
+  if isinstance(user_agent, dict):
+    ua += "; " + "; ".join("{}/{}".format(k, v) for k, v in user_agent.items())
+  elif isinstance(user_agent, str):
+    ua += "; " + user_agent
+  return ua
+
+# Step 4. Convert a URL to a unique filename for caching purposes. (used in get_from_cache())
+def url_to_filename(url: str, etag: Optional[str] = None) -> str:
+  """
+  Convert a URL to a unique filename for caching purposes.
+  """
+  
 
 
-def cached_path(
-  url_or_filename,
-  cache_dir=None,
-  force_download=False,
-  proxies=None,
-  resume_download=False,
-  user_agent: Union[Dict, str, None] = None,
-  extract_compressed_file=False,
-  force_extract=False,
-  use_auth_token: Union[bool, str, None] = None,
-  local_files_only=False,
-) -> Optional[str]:
-  if cache_dir is None:
-    cache_dir = TRANSFORMERS_CACHE
-  if isinstance(url_or_filename, Path):
-    url_or_filename = str(url_or_filename)
-  if isinstance(cache_dir, Path):
-    cache_dir = str(cache_dir)
+  url_bytes = url.encode("utf-8")
+  filename = sha256(url_bytes).hexdigest()
 
-  if is_remote_url(url_or_filename):
-    # URL, so get it from the cache (downloading if necessary)
-    output_path = get_from_cache(
-      url_or_filename,
-      cache_dir=cache_dir,
-      force_download=force_download,
-      proxies=proxies,
-      resume_download=resume_download,
-      user_agent=user_agent,
-      use_auth_token=use_auth_token,
-      local_files_only=local_files_only,
-    )
-  elif os.path.exists(url_or_filename):
-    # File, and it exists.
-    output_path = url_or_filename
-  elif urlparse(url_or_filename).scheme == "":
-    # File, but it doesn't exist.
-    raise EnvironmentError("file {} not found".format(url_or_filename))
-  else:
-    # Something unknown
-    raise ValueError("unable to parse {} as a URL or as a local path".format(url_or_filename))
+  if etag:
+    etag_bytes = etag.encode("utf-8")
+    filename += "." + sha256(etag_bytes).hexdigest()
 
-  if extract_compressed_file:
-    if not is_zipfile(output_path) and not tarfile.is_tarfile(output_path):
-      return output_path
+  if url.endswith(".h5"):
+    filename += ".h5"
 
-    # Path where we extract compressed archives
-    # We avoid '.' in dir name and add "-extracted" at the end: "./model.zip" => "./model-zip-extracted/"
-    output_dir, output_file = os.path.split(output_path)
-    output_extract_dir_name = output_file.replace(".", "-") + "-extracted"
-    output_path_extracted = os.path.join(output_dir, output_extract_dir_name)
+  return filename
+# Step 4. END.
 
-    if os.path.isdir(output_path_extracted) and os.listdir(output_path_extracted) and not force_extract:
-      return output_path_extracted
+# Step 5. Actually download the file from the network (used in get_from_cache())
+def http_get(url: str, temp_file: BinaryIO, proxies=None, resume_size=0, headers: Optional[Dict[str, str]] = None):
 
-    # Prevent parallel extractions
-    lock_path = output_path + ".lock"
-    with FileLock(lock_path):
-      shutil.rmtree(output_path_extracted, ignore_errors=True)
-      os.makedirs(output_path_extracted)
-      if is_zipfile(output_path):
-        with ZipFile(output_path, "r") as zip_file:
-          zip_file.extractall(output_path_extracted)
-          zip_file.close()
-      elif tarfile.is_tarfile(output_path):
-        tar_file = tarfile.open(output_path)
-        tar_file.extractall(output_path_extracted)
-        tar_file.close()
-      else:
-        raise EnvironmentError("Archive format of {} could not be identified".format(output_path))
+  """
+  Perform an HTTP GET request to download a file from the given URL.
+  A helper function that is used in get_from_cache().
+  """
 
-    return output_path_extracted
 
-  return output_path
+  headers = copy.deepcopy(headers)
+  if resume_size > 0:
+    headers["Range"] = "bytes=%d-" % (resume_size,)
+  r = requests.get(url, stream=True, proxies=proxies, headers=headers)
+  r.raise_for_status()
+  content_length = r.headers.get("Content-Length")
+  total = resume_size + int(content_length) if content_length is not None else None
+  progress = tqdm(
+    unit="B",
+    unit_scale=True,
+    total=total,
+    initial=resume_size,
+    desc="Downloading",
+    disable=False,
+  )
+  for chunk in r.iter_content(chunk_size=1024):
+    if chunk:  # filter out keep-alive new chunks
+      progress.update(len(chunk))
+      temp_file.write(chunk)
+  progress.close()
 
+#################################################################
+# Miscellaneous functions
+#################################################################
 
 def get_parameter_dtype(parameter: Union[nn.Module]):
+
+  """
+  Returns the floating-point precision of a model's weights (e.g., `torch.float32` vs `torch.float16`). 
+  It simply inspects the first parameter of the model:
+  ```python
+  next(parameter.parameters()).dtype
+  ```
+  This is used by `base_bert.py` so the model knows what precision to cast input masks to.
+  """
+
+
   try:
     return next(parameter.parameters()).dtype
   except StopIteration:
@@ -338,6 +391,20 @@ def get_parameter_dtype(parameter: Union[nn.Module]):
 
 
 def get_extended_attention_mask(attention_mask: Tensor, dtype) -> Tensor:
+
+  """
+  Converts a 2D attention mask into an extended 4D attention mask suitable for multi-head attention.
+   — Very Important for BERT! See notes on `utils.py` for more details.
+
+  Args:
+      attention_mask (Tensor): A 2D tensor of shape [batch_size, seq_length].
+      dtype: The desired data type of the output tensor.
+
+  Returns:
+      Tensor: A 4D tensor of shape [batch_size, 1, 1, seq_length] with values 0 or -10000.0.
+  """
+
+
   # attention_mask [batch_size, seq_length]
   assert attention_mask.dim() == 2
   # [batch_size, 1, 1, seq_length] for multi-head attention
@@ -345,3 +412,4 @@ def get_extended_attention_mask(attention_mask: Tensor, dtype) -> Tensor:
   extended_attention_mask = extended_attention_mask.to(dtype=dtype)  # fp16 compatibility
   extended_attention_mask = (1.0 - extended_attention_mask) * -10000.0
   return extended_attention_mask
+
